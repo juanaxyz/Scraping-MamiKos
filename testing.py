@@ -18,6 +18,27 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
 }
 
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_RADIUS_METERS = 3000
+OVERPASS_TIMEOUT_SECONDS = 25
+ENABLE_POI_ENRICHMENT = True
+
+# Pemetaan kategori POI ke tag OSM yang relevan untuk demand/livability score.
+POI_CATEGORIES = {
+    "university": [("amenity", "university")],
+    "hospital": [("amenity", "hospital")],
+    "marketplace": [("amenity", "marketplace")],
+    "supermarket": [("shop", "supermarket")],
+    "station": [("public_transport", "station"), ("railway", "station")],
+    "mall": [("shop", "mall")],
+    "government": [("office", "government")],
+    "clinic": [("amenity", "clinic")],
+    "school": [("amenity", "school")],
+    "restaurant": [("amenity", "restaurant")],
+}
+
+POI_DISTANCE_CACHE = {}
+
 
 def hitung_jarak_haversine(lat1, lon1, lat2, lon2):
     """Menghitung jarak geografis lingkaran besar antara dua koordinat (km)."""
@@ -34,6 +55,96 @@ def hitung_jarak_haversine(lat1, lon1, lat2, lon2):
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
+
+
+def build_overpass_query(lat, lon, radius=OVERPASS_RADIUS_METERS):
+    query_lines = []
+    for tags in POI_CATEGORIES.values():
+        for key, value in tags:
+            query_lines.append(
+                f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];'
+            )
+
+    query_block = "\n    ".join(query_lines)
+    return (
+        "[out:json][timeout:25];\n"
+        "(\n"
+        f"    {query_block}\n"
+        ");\n"
+        "out center tags;"
+    )
+
+
+def _to_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
+    result = {
+        f"dist_to_nearest_{category}_km": None
+        for category in POI_CATEGORIES.keys()
+    }
+
+    lat = _to_float(kos_lat)
+    lon = _to_float(kos_lon)
+    if lat is None or lon is None:
+        return result
+
+    cache_key = (round(lat, 4), round(lon, 4))
+    if cache_key in POI_DISTANCE_CACHE:
+        return POI_DISTANCE_CACHE[cache_key].copy()
+
+    query = build_overpass_query(lat, lon)
+    try:
+        response = requests.post(
+            OVERPASS_URL,
+            data={"data": query},
+            headers={
+                "User-Agent": HEADERS["User-Agent"],
+                "Accept": "application/json",
+            },
+            timeout=OVERPASS_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as e:
+        if debug:
+            print(f"    [POI] Gagal query Overpass: {e}")
+        POI_DISTANCE_CACHE[cache_key] = result.copy()
+        return result
+
+    nearest = {category: None for category in POI_CATEGORIES.keys()}
+    elements = payload.get("elements", [])
+
+    for elem in elements:
+        tags = elem.get("tags", {})
+        elem_lat = _to_float(elem.get("lat", elem.get("center", {}).get("lat")))
+        elem_lon = _to_float(elem.get("lon", elem.get("center", {}).get("lon")))
+        if elem_lat is None or elem_lon is None:
+            continue
+
+        distance_km = hitung_jarak_haversine(lat, lon, elem_lat, elem_lon)
+
+        for category, tag_pairs in POI_CATEGORIES.items():
+            matched = any(tags.get(key) == value for key, value in tag_pairs)
+            if not matched:
+                continue
+
+            previous = nearest[category]
+            if previous is None or distance_km < previous:
+                nearest[category] = distance_km
+
+    for category, distance_km in nearest.items():
+        if distance_km is not None:
+            result[f"dist_to_nearest_{category}_km"] = round(distance_km, 3)
+
+    POI_DISTANCE_CACHE[cache_key] = result.copy()
+    return result
 
 
 def ekstrak_detail_via_hybrid(url_detail):
@@ -109,9 +220,7 @@ def scrape_pencarian_hybrid(page):
             print(f"\n--> Memproses Card [{index + 1}/{total_cards}]")
 
             # Ambil locator segar berdasarkan urutan indeks
-            current_card = page.locator(".kost-rc").nth(index)
-            if current_card.count() == 0:
-                current_card = page.locator('[data-testid="nominatimRoomCard"]').nth(index)
+            current_card = cards_locator.nth(index)
 
             # Ekstrak data teks dari UI Card
             nama_loc = current_card.locator(".rc-info__name, .kost-rc__info span").first
@@ -156,12 +265,16 @@ def scrape_pencarian_hybrid(page):
                 data_backend["longitude"] = kos_lon
 
                 # Hitung jarak Haversine ke UNUD jika koordinatnya ada
-                if kos_lat and kos_lon:
+                if kos_lat is not None and kos_lon is not None:
                     j_jimbaran = hitung_jarak_haversine(kos_lat, kos_lon, REKTORAT_UNUD[0], REKTORAT_UNUD[1])
                     j_sudirman = hitung_jarak_haversine(kos_lat, kos_lon, UNUD_SUDIRMAN[0], UNUD_SUDIRMAN[1])
                     data_backend["jarak_unud_jimbaran_km"] = round(j_jimbaran, 2)
                     data_backend["jarak_unud_sudirman_km"] = round(j_sudirman, 2)
                     print(f"    [Sukses] Koordinat didapat. Jarak ke Jimbaran: {data_backend['jarak_unud_jimbaran_km']} km")
+
+                if ENABLE_POI_ENRICHMENT:
+                    poi_distances = enrich_nearest_poi_distances(kos_lat, kos_lon, debug=True)
+                    data_backend.update(poi_distances)
 
             if obj_harga and "price" in obj_harga:
                 h_bulan = obj_harga["price"].get("price_monthly", {})
