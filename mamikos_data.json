@@ -1,0 +1,40 @@
+[
+    {
+        "nama_kost": "Kost Christine Tipe A",
+        "tipe_kost": "Campur",
+        "lokasi": "Kuta Selatan",
+        "harga": "Rp2.300.000",
+        "tipe_sewa": "/bulan",
+        "rating": 4.3,
+        "sisa_kamar": "Sisa 2 kamar",
+        "total_view": "Dilihat 500+ kali",
+        "fasilitas": [
+            "K. Mandi Dalam",
+            "WiFi",
+            "AC",
+            "Kloset Duduk",
+            "Kasur",
+            "Akses 24 Jam"
+        ],
+        "url_detail": null
+    },
+    {
+        "nama_kost": "Kost Arisma Non Mezanin",
+        "tipe_kost": "Campur",
+        "lokasi": "Kuta",
+        "harga": "Rp2.595.000",
+        "tipe_sewa": "/bulan",
+        "rating": null,
+        "sisa_kamar": "Sisa 1 kamar",
+        "total_view": "Dilihat 500+ kali",
+        "fasilitas": [
+            "K. Mandi Dalam",
+            "WiFi",
+            "AC",
+            "Kloset Duduk",
+            "Kasur",
+            "Akses 24 Jam"
+        ],
+        "url_detail": null
+    }
+]
