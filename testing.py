@@ -15,12 +15,17 @@ MAX_CARDS_TO_TEST = 3
 REKTORAT_UNUD = [-8.798256245751867, 115.17249471428231]  # Kampus Bukit Jimbaran
 UNUD_SUDIRMAN = [-8.673060417640015, 115.21901203994138]  # Kampus Denpasar
 
+BANDARA_IGUSTI_NGURAH_RAI = [-8.745770625116275, 115.16783601042454] 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
 }
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
 OVERPASS_TIMEOUT_SECONDS = 25
 ENABLE_POI_ENRICHMENT = True
 
@@ -28,14 +33,10 @@ ENABLE_POI_ENRICHMENT = True
 POI_CATEGORIES = {
     "university": {"tags": [("amenity", "university")], "radius": 10000},
     "hospital": {"tags": [("amenity", "hospital")], "radius": 10000},
-    "marketplace": {"tags": [("amenity", "marketplace")], "radius": 5000},
     "supermarket": {"tags": [("shop", "supermarket")], "radius": 3000},
     "station": {"tags": [("public_transport", "station"), ("railway", "station")], "radius": 5000},
     "mall": {"tags": [("shop", "mall")], "radius": 10000},
-    "government": {"tags": [("office", "government")], "radius": 5000},
     "clinic": {"tags": [("amenity", "clinic")], "radius": 3000},
-    "school": {"tags": [("amenity", "school")], "radius": 5000},
-    "restaurant": {"tags": [("amenity", "restaurant")], "radius": 1000},
 }
 
 POI_DISTANCE_CACHE = {}
@@ -170,40 +171,46 @@ def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
         )
 
         elements = []
-        for attempt in range(3):
-            try:
-                response = requests.get(
-                    OVERPASS_URL,
-                    params={"data": query},
-                    headers={"User-Agent": HEADERS["User-Agent"]},
-                    timeout=OVERPASS_TIMEOUT_SECONDS + 5,
-                )
-                response.raise_for_status()
-                elements = response.json().get("elements", [])
-                break
-            except requests.exceptions.Timeout:
-                wait_seconds = 10 * (attempt + 1)
-                if debug:
-                    print(
-                        f"      [POI] Timeout attempt {attempt + 1}/3 untuk {category}, retry dalam {wait_seconds}s..."
+        request_succeeded = False
+        for endpoint_index, endpoint in enumerate(OVERPASS_ENDPOINTS):
+            for attempt in range(3):
+                try:
+                    response = requests.get(
+                        endpoint,
+                        params={"data": query},
+                        headers={"User-Agent": HEADERS["User-Agent"]},
+                        timeout=OVERPASS_TIMEOUT_SECONDS + 5,
                     )
-                time.sleep(wait_seconds)
-            except requests.exceptions.HTTPError:
-                status_code = getattr(response, "status_code", None)
-                if status_code in (429, 504):
-                    wait_seconds = 15 * (attempt + 1)
+                    response.raise_for_status()
+                    elements = response.json().get("elements", [])
+                    request_succeeded = True
+                    break
+                except requests.exceptions.Timeout:
+                    wait_seconds = min(30, 3 * (2 ** attempt))
                     if debug:
                         print(
-                            f"      [POI] HTTP {status_code} untuk {category}, retry dalam {wait_seconds}s..."
+                            f"      [POI] Timeout attempt {attempt + 1}/3 untuk {category} di endpoint {endpoint_index + 1}, retry dalam {wait_seconds}s..."
                         )
                     time.sleep(wait_seconds)
-                    continue
-                if debug:
-                    print(f"      [POI] HTTP Error tidak tertangani untuk {category}: {status_code}")
-                break
-            except Exception as e:
-                if debug:
-                    print(f"      [POI] Error untuk {category}: {e}")
+                except requests.exceptions.HTTPError:
+                    status_code = getattr(response, "status_code", None)
+                    if status_code in (429, 504):
+                        wait_seconds = min(45, 5 * (2 ** attempt))
+                        if debug:
+                            print(
+                                f"      [POI] HTTP {status_code} untuk {category} di endpoint {endpoint_index + 1}, retry dalam {wait_seconds}s..."
+                            )
+                        time.sleep(wait_seconds)
+                        continue
+                    if debug:
+                        print(f"      [POI] HTTP Error tidak tertangani untuk {category}: {status_code}")
+                    break
+                except Exception as e:
+                    if debug:
+                        print(f"      [POI] Error untuk {category}: {e}")
+                    break
+
+            if request_succeeded:
                 break
 
         nearest_km = None
@@ -350,8 +357,10 @@ def scrape_pencarian_hybrid(page):
                 if kos_lat is not None and kos_lon is not None:
                     j_jimbaran = hitung_jarak_haversine(kos_lat, kos_lon, REKTORAT_UNUD[0], REKTORAT_UNUD[1])
                     j_sudirman = hitung_jarak_haversine(kos_lat, kos_lon, UNUD_SUDIRMAN[0], UNUD_SUDIRMAN[1])
+                    j_bandara = hitung_jarak_haversine(kos_lat, kos_lon, BANDARA_IGUSTI_NGURAH_RAI[0], BANDARA_IGUSTI_NGURAH_RAI[1])
                     data_backend["jarak_unud_jimbaran_km"] = round(j_jimbaran, 2)
                     data_backend["jarak_unud_sudirman_km"] = round(j_sudirman, 2)
+                    data_backend["jarak_bandara_ngurah_rai_km"] = round(j_bandara, 2)
                     print(f"    [Sukses] Koordinat didapat. Jarak ke Jimbaran: {data_backend['jarak_unud_jimbaran_km']} km")
 
                 if ENABLE_POI_ENRICHMENT:
