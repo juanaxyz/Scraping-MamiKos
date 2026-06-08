@@ -84,6 +84,61 @@ def _to_float(value):
         return None
 
 
+def _normalize_facility_names(items):
+    if not items:
+        return []
+    normalized = []
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name")
+            if name:
+                normalized.append(name)
+        elif item:
+            normalized.append(item)
+    return normalized
+
+
+def ambil_kolom_analisis_dari_json(obj_kos):
+    """Ambil dan rapikan kolom yang relevan untuk analisis dari JSON detail Mamikos."""
+    if not isinstance(obj_kos, dict):
+        return {}
+
+    price_title_formats = obj_kos.get("price_title_formats", {}) or {}
+    price_daily = price_title_formats.get("price_daily", {}).get("price") or obj_kos.get("price_daily")
+    price_weekly = price_title_formats.get("price_weekly", {}).get("price") or obj_kos.get("price_weekly")
+    price_monthly = price_title_formats.get("price_monthly", {}).get("price") or obj_kos.get("price_monthly")
+    price_yearly = price_title_formats.get("price_yearly", {}).get("price") or obj_kos.get("price_yearly")
+
+    top_facilities = obj_kos.get("top_facilities", []) or []
+    top_facility_names = _normalize_facility_names(top_facilities)
+
+    return {
+        "area_subdistrict": obj_kos.get("area_subdistrict"),
+        "area_city": obj_kos.get("area_city"),
+        "latitude": obj_kos.get("latitude"),
+        "longitude": obj_kos.get("longitude"),
+        "price_daily": _to_float(price_daily),
+        "price_weekly": _to_float(price_weekly),
+        "price_monthly": _to_float(price_monthly),
+        "price_yearly": _to_float(price_yearly),
+        "price_tag": obj_kos.get("price_tag"),
+        "dp_percentage": obj_kos.get("dp_percentage"),
+        "fac_room": obj_kos.get("fac_room", []) or [],
+        "fac_share": obj_kos.get("fac_share", []) or [],
+        "fac_bath": obj_kos.get("fac_bath", []) or [],
+        "top_facilities": top_facility_names,
+        "view_count": obj_kos.get("view_count"),
+        "love_count": obj_kos.get("love_count"),
+        "review_count": obj_kos.get("review_count"),
+        "rating": obj_kos.get("rating"),
+        "available_room": obj_kos.get("available_room"),
+        "size": obj_kos.get("size"),
+        "gender": obj_kos.get("gender"),
+        "booking_type": obj_kos.get("booking_type", []) or [],
+        "building_year": obj_kos.get("building_year"),
+    }
+
+
 def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
     result = {
         f"dist_to_nearest_{category}_km": None
@@ -263,6 +318,9 @@ def scrape_pencarian_hybrid(page):
                 
                 data_backend["latitude"] = kos_lat
                 data_backend["longitude"] = kos_lon
+
+                analysis_columns = ambil_kolom_analisis_dari_json(obj_kos)
+                data_backend.update(analysis_columns)
 
                 # Hitung jarak Haversine ke UNUD jika koordinatnya ada
                 if kos_lat is not None and kos_lon is not None:
