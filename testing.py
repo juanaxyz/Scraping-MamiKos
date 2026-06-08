@@ -67,6 +67,17 @@ def _to_float(value):
         return None
 
 
+def _safe_get_nested(data, *keys, default=None):
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+        if current is None:
+            return default
+    return current
+
+
 def _normalize_facility_names(items):
     if not items:
         return []
@@ -87,10 +98,10 @@ def ambil_kolom_analisis_dari_json(obj_kos):
         return {}
 
     price_title_formats = obj_kos.get("price_title_formats", {}) or {}
-    price_daily = price_title_formats.get("price_daily", {}).get("price") or obj_kos.get("price_daily")
-    price_weekly = price_title_formats.get("price_weekly", {}).get("price") or obj_kos.get("price_weekly")
-    price_monthly = price_title_formats.get("price_monthly", {}).get("price") or obj_kos.get("price_monthly")
-    price_yearly = price_title_formats.get("price_yearly", {}).get("price") or obj_kos.get("price_yearly")
+    price_daily = _safe_get_nested(price_title_formats, "price_daily", "price", default=None) or obj_kos.get("price_daily")
+    price_weekly = _safe_get_nested(price_title_formats, "price_weekly", "price", default=None) or obj_kos.get("price_weekly")
+    price_monthly = _safe_get_nested(price_title_formats, "price_monthly", "price", default=None) or obj_kos.get("price_monthly")
+    price_yearly = _safe_get_nested(price_title_formats, "price_yearly", "price", default=None) or obj_kos.get("price_yearly")
 
     top_facilities = obj_kos.get("top_facilities", []) or []
     top_facility_names = _normalize_facility_names(top_facilities)
@@ -348,7 +359,8 @@ def scrape_pencarian_hybrid(page):
                     data_backend.update(poi_distances)
 
             if obj_harga and "price" in obj_harga:
-                h_bulan = obj_harga["price"].get("price_monthly", {})
+                price_block = obj_harga.get("price") or {}
+                h_bulan = price_block.get("price_monthly") or {}
                 if h_bulan:
                     data_backend["harga_real_detail"] = f"{h_bulan.get('currency_symbol')}{h_bulan.get('price')}/{h_bulan.get('rent_type_unit')}"
 
