@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 BASE_URL = "https://mamikos.com/cari/"
 SESSION_FILE = "mamikos_session.json"
 OUTPUT_FILE = "mamikos_hybrid_data.json"
+MAX_CARDS_TO_TEST = 3
 
 # Koordinat Titik Acuan Analisis (Kampus UNUD)
 REKTORAT_UNUD = [-8.798256245751867, 115.17249471428231]  # Kampus Bukit Jimbaran
@@ -277,7 +278,7 @@ def scrape_pencarian_hybrid(page):
     if cards_locator.count() == 0:
         cards_locator = page.locator('[data-testid="nominatimRoomCard"]')
 
-    total_cards = cards_locator.count()
+    total_cards = min(cards_locator.count(), MAX_CARDS_TO_TEST)
     print(f"Jumlah card yang ditemukan di browser UI: {total_cards}")
 
     scraped_data = []
