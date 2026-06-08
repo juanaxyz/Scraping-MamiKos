@@ -1,74 +1,561 @@
 import json
+import math
 import os
+import re
+import requests
 from playwright.sync_api import sync_playwright
-from mamikos_scraper import inspect_room_detail, open_card_detail, search_by_locations
 
 BASE_URL = "https://mamikos.com/cari/"
 SESSION_FILE = "mamikos_session.json"
-OUTPUT_FILE = "mamikos_data.json"
-OUTPUT_FILE_DETAIL = "mamikos_data_detail.json"
+OUTPUT_FILE = "mamikos_data_unud_jimbaran.json"
+MAX_CARDS_TO_TEST = 3
+
+# Koordinat Titik Acuan Analisis (Kampus UNUD)
+REKTORAT_UNUD = [-8.798256245751867, 115.17249471428231]  # Kampus Bukit Jimbaran
+UNUD_SUDIRMAN = [-8.673060417640015, 115.21901203994138]  # Kampus Denpasar
+
+BANDARA_IGUSTI_NGURAH_RAI = [-8.745770625116275, 115.16783601042454]
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+}
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+]
+OVERPASS_TIMEOUT_SECONDS = 8
+ENABLE_POI_ENRICHMENT = True
+
+# Pemetaan kategori POI ke tag OSM dan radius spesifik per kategori.
+POI_CATEGORIES = {
+    "university": {"tags": [("amenity", "university")], "radius": 10000},
+    "hospital": {"tags": [("amenity", "hospital")], "radius": 10000},
+    "supermarket": {"tags": [("shop", "supermarket")], "radius": 10000},
+    "terminal": {"tags": [("amenity", "bus_station")], "radius": 10000},
+    "mall": {"tags": [("shop", "mall")], "radius": 10000},
+    "clinic": {"tags": [("amenity", "clinic")], "radius": 10000},
+}
+
+POI_DISTANCE_CACHE = {}
 
 
-def block_assets(route):
-    if route.request.resource_type == "image":
-        route.abort()  # Batalkan request jika berupa CSS
-    else:
-        route.continue_()  # Lanjutkan jika bukan CSS (seperti dokumen HTML, JS, dll)
+def hitung_jarak_haversine(lat1, lon1, lat2, lon2):
+    """Menghitung jarak geografis lingkaran besar antara dua koordinat (km)."""
+    R = 6371.0
+    rad_lat1, rad_lon1 = math.radians(lat1), math.radians(lon1)
+    rad_lat2, rad_lon2 = math.radians(lat2), math.radians(lon2)
+
+    dlat = rad_lat2 - rad_lat1
+    dlon = rad_lon2 - rad_lon1
+
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(rad_lat1) * math.cos(rad_lat2) * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 
-if __name__ == "__main__":
+def _to_float(value):
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_get_nested(data, *keys, default=None):
+    current = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+        if current is None:
+            return default
+    return current
+
+
+def _normalize_facility_names(items):
+    if not items:
+        return []
+    normalized = []
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name")
+            if name:
+                normalized.append(name)
+        elif item:
+            normalized.append(item)
+    return normalized
+
+
+def _extract_poi_label(tags, category):
+    if not isinstance(tags, dict):
+        return category
+
+    for key in ("name", "brand", "operator", "ref", "amenity", "shop", "office"):
+        value = tags.get(key)
+        if value:
+            return value
+
+    for key, value in tags.items():
+        if value:
+            return f"{key}={value}"
+
+    return category
+
+
+def ambil_kolom_analisis_dari_json(obj_kos):
+    """Ambil dan rapikan kolom yang relevan untuk analisis dari JSON detail Mamikos."""
+    if not isinstance(obj_kos, dict):
+        return {}
+
+    price_title_formats = obj_kos.get("price_title_formats", {}) or {}
+    price_daily = _safe_get_nested(
+        price_title_formats, "price_daily", "price", default=None
+    ) or obj_kos.get("price_daily")
+    price_weekly = _safe_get_nested(
+        price_title_formats, "price_weekly", "price", default=None
+    ) or obj_kos.get("price_weekly")
+    price_monthly = _safe_get_nested(
+        price_title_formats, "price_monthly", "price", default=None
+    ) or obj_kos.get("price_monthly")
+    price_yearly = _safe_get_nested(
+        price_title_formats, "price_yearly", "price", default=None
+    ) or obj_kos.get("price_yearly")
+
+    top_facilities = obj_kos.get("top_facilities", []) or []
+    top_facility_names = _normalize_facility_names(top_facilities)
+
+    return {
+        "area_subdistrict": obj_kos.get("area_subdistrict"),
+        "area_city": obj_kos.get("area_city"),
+        "latitude": obj_kos.get("latitude"),
+        "longitude": obj_kos.get("longitude"),
+        "price_daily": _to_float(price_daily),
+        "price_weekly": _to_float(price_weekly),
+        "price_monthly": _to_float(price_monthly),
+        "price_yearly": _to_float(price_yearly),
+        "price_tag": obj_kos.get("price_tag"),
+        "dp_percentage": obj_kos.get("dp_percentage"),
+        "fac_room": obj_kos.get("fac_room", []) or [],
+        "fac_share": obj_kos.get("fac_share", []) or [],
+        "fac_bath": obj_kos.get("fac_bath", []) or [],
+        "top_facilities": top_facility_names,
+        "view_count": obj_kos.get("view_count"),
+        "love_count": obj_kos.get("love_count"),
+        "review_count": obj_kos.get("review_count"),
+        "rating": obj_kos.get("rating"),
+        "available_room": obj_kos.get("available_room"),
+        "size": obj_kos.get("size"),
+        "gender": obj_kos.get("gender"),
+        "booking_type": obj_kos.get("booking_type", []) or [],
+        "building_year": obj_kos.get("building_year"),
+    }
+
+
+def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
+    result = {
+        f"dist_to_nearest_{category}_km": None for category in POI_CATEGORIES.keys()
+    }
+    result.update(
+        {f"nearest_{category}_name": None for category in POI_CATEGORIES.keys()}
+    )
+
+    lat = _to_float(kos_lat)
+    lon = _to_float(kos_lon)
+    if lat is None or lon is None:
+        return result
+
+    cache_key = (round(lat, 4), round(lon, 4))
+    if cache_key in POI_DISTANCE_CACHE:
+        if debug:
+            print(f"      [POI] Cache hit untuk {cache_key}")
+        return POI_DISTANCE_CACHE[cache_key].copy()
+
+    def _query_poi_elements(category, config):
+        tags = config["tags"]
+        radius = config["radius"]
+
+        if debug:
+            print(f"      [POI] Querying: {category} (radius {radius}m)...")
+
+        tag_filters = "\n    ".join(
+            f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];'
+            for key, value in tags
+        )
+        query = (
+            f"[out:json][timeout:{OVERPASS_TIMEOUT_SECONDS}];\n"
+            f"(\n"
+            f"    {tag_filters}\n"
+            f");\n"
+            f"out center 5;"
+        )
+
+        for endpoint_index, endpoint in enumerate(OVERPASS_ENDPOINTS):
+            try:
+                response = requests.get(
+                    endpoint,
+                    params={"data": query},
+                    headers={"User-Agent": HEADERS["User-Agent"]},
+                    timeout=OVERPASS_TIMEOUT_SECONDS + 2,
+                )
+                response.raise_for_status()
+                return response.json().get("elements", []), None
+            except requests.exceptions.HTTPError as e:
+                status_code = e.response.status_code if e.response else None
+                if status_code in (429, 504):
+                    if debug:
+                        print(
+                            f"      [POI] HTTP {status_code} untuk {category} di endpoint {endpoint_index + 1}, tunda ke putaran akhir."
+                        )
+                    return [], "defer"
+                if debug:
+                    print(
+                        f"      [POI] HTTP Error tidak tertangani untuk {category}: {status_code}"
+                    )
+            except requests.exceptions.Timeout:
+                if debug:
+                    print(
+                        f"      [POI] Timeout untuk {category} di endpoint {endpoint_index + 1}, lanjut endpoint/kategori berikutnya."
+                    )
+            except Exception as e:
+                if debug:
+                    print(f"      [POI] Error untuk {category}: {e}")
+
+        return [], None
+
+    def _update_nearest_result(category, elements):
+        nearest_km = None
+        nearest_name = None
+        for elem in elements:
+            tags = elem.get("tags", {})
+            elem_lat = _to_float(elem.get("lat") or elem.get("center", {}).get("lat"))
+            elem_lon = _to_float(elem.get("lon") or elem.get("center", {}).get("lon"))
+            if elem_lat is None or elem_lon is None:
+                continue
+
+            distance_km = hitung_jarak_haversine(lat, lon, elem_lat, elem_lon)
+            if nearest_km is None or distance_km < nearest_km:
+                nearest_km = distance_km
+                nearest_name = _extract_poi_label(tags, category)
+
+        if nearest_km is not None:
+            result[f"dist_to_nearest_{category}_km"] = round(nearest_km, 3)
+            result[f"nearest_{category}_name"] = nearest_name
+            if debug:
+                print(
+                    f"      [POI] Terdekat {category}: {nearest_name} ({round(nearest_km, 3)} km)"
+                )
+
+    deferred_categories = []
+
+    for category, config in POI_CATEGORIES.items():
+        elements, status = _query_poi_elements(category, config)
+        if status == "defer":
+            deferred_categories.append((category, config))
+            continue
+        _update_nearest_result(category, elements)
+
+    if deferred_categories:
+        if debug:
+            print("      [POI] Memulai retry terakhir untuk kategori tertunda...")
+        for category, config in deferred_categories:
+            elements, _ = _query_poi_elements(category, config)
+            _update_nearest_result(category, elements)
+
+    POI_DISTANCE_CACHE[cache_key] = result.copy()
+    return result
+
+
+def ekstrak_detail_via_hybrid(url_detail):
+    """
+    Pendekatan Hybrid: Mengunduh HTML secara instan via requests
+    dan membongkar objek JavaScript (window.detail) via Regex.
+    """
+    try:
+        response = requests.get(url_detail, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            html_content = response.text
+
+            # Regex untuk menangkap var detail dan var price_card_info
+            match_detail = re.search(
+                r"var\s+detail\s*=\s*(\{.*?\});", html_content, re.DOTALL
+            )
+            match_price = re.search(
+                r"var\s+price_card_info\s*=\s*(\{.*?\});",
+                html_content,
+                re.DOTALL,
+            )
+
+            detail_data = {}
+
+            if match_detail:
+                obj_kos = json.loads(match_detail.group(1))
+                kos_lat = obj_kos.get("latitude")
+                kos_lon = obj_kos.get("longitude")
+
+                detail_data["latitude"] = kos_lat
+                detail_data["longitude"] = kos_lon
+
+                # Lakukan kalkulasi jarak jika koordinat valid
+                if kos_lat and kos_lon:
+                    j_jimbaran = hitung_jarak_haversine(
+                        kos_lat, kos_lon, REKTORAT_UNUD[0], REKTORAT_UNUD[1]
+                    )
+                    j_sudirman = hitung_jarak_haversine(
+                        kos_lat, kos_lon, UNUD_SUDIRMAN[0], UNUD_SUDIRMAN[1]
+                    )
+                    detail_data["jarak_unud_jimbaran_km"] = round(j_jimbaran, 2)
+                    detail_data["jarak_unud_sudirman_km"] = round(j_sudirman, 2)
+
+            if match_price:
+                obj_harga = json.loads(match_price.group(1))
+                if "price" in obj_harga:
+                    h_bulan = obj_harga["price"].get("price_monthly", {})
+                    detail_data["harga_real_detail"] = (
+                        f"{h_bulan.get('currency_symbol')}{h_bulan.get('price')}/{h_bulan.get('rent_type_unit')}"
+                    )
+
+            return detail_data
+
+    except Exception as e:
+        print(f"      Gagal HTTP Request detail: {e}")
+
+    return {}
+
+
+def scrape_pencarian_hybrid(page):
+    print("\n[TAHAP 1] Memulai ekstraksi card & mengambil data objek...")
+
+    cards_locator = page.locator(".kost-rc")
+    if cards_locator.count() == 0:
+        cards_locator = page.locator('[data-testid="nominatimRoomCard"]')
+
+    total_cards = cards_locator.count()
+    print(f"Jumlah card yang ditemukan di browser UI: {total_cards}")
+
+    scraped_data = []
+
+    for index in range(total_cards):
+        try:
+            print(f"\n--> Memproses Card [{index + 1}/{total_cards}]")
+
+            # Ambil locator segar berdasarkan urutan indeks
+            current_card = cards_locator.nth(index)
+
+            # Ekstrak data teks dari UI Card
+            nama_loc = current_card.locator(".rc-info__name, .kost-rc__info span").first
+            nama = (
+                nama_loc.text_content().strip()
+                if nama_loc.count() > 0
+                else f"Kos Idx {index}"
+            )
+
+            harga_loc = current_card.locator(
+                ".rc-overview__label, .bg-c-label, .rc-price__text"
+            ).first
+            harga_card = (
+                harga_loc.text_content().strip() if harga_loc.count() > 0 else None
+            )
+
+            # Tangkap pembukaan tab baru
+            context = page.context
+            with context.expect_page() as new_page_info:
+                current_card.click()
+
+            detail_page = new_page_info.value
+
+            # Tunggu JavaScript di tab baru selesai memuat objek globalnya
+            detail_page.wait_for_load_state("domcontentloaded")
+            url_detail = detail_page.url
+            print(f"    Berhasil mendapatkan URL Detail: {url_detail}")
+
+            # --- AMBIL DATA LANGSUNG DARI MEMORI TAB BARU (PENGGANTI REQUESTS) ---
+            print(
+                "    [Engine] Mengekstrak window.detail langsung dari browser memory..."
+            )
+
+            # evaluate() memanggil variabel javascript di tab tersebut dan mengembalikannya ke Python
+            obj_kos = detail_page.evaluate("() => window.detail")
+            obj_harga = detail_page.evaluate("() => window.price_card_info")
+
+            # Siapkan penampung data detail
+            data_backend = {
+                "latitude": None,
+                "longitude": None,
+                "jarak_unud_jimbaran_km": None,
+                "jarak_unud_sudirman_km": None,
+                "harga_real_detail": None,
+            }
+
+            if obj_kos:
+                kos_lat = obj_kos.get("latitude")
+                kos_lon = obj_kos.get("longitude")
+
+                data_backend["latitude"] = kos_lat
+                data_backend["longitude"] = kos_lon
+
+                analysis_columns = ambil_kolom_analisis_dari_json(obj_kos)
+                data_backend.update(analysis_columns)
+
+                # Hitung jarak Haversine ke UNUD jika koordinatnya ada
+                if kos_lat is not None and kos_lon is not None:
+                    j_jimbaran = hitung_jarak_haversine(
+                        kos_lat, kos_lon, REKTORAT_UNUD[0], REKTORAT_UNUD[1]
+                    )
+                    j_sudirman = hitung_jarak_haversine(
+                        kos_lat, kos_lon, UNUD_SUDIRMAN[0], UNUD_SUDIRMAN[1]
+                    )
+                    j_bandara = hitung_jarak_haversine(
+                        kos_lat,
+                        kos_lon,
+                        BANDARA_IGUSTI_NGURAH_RAI[0],
+                        BANDARA_IGUSTI_NGURAH_RAI[1],
+                    )
+                    data_backend["jarak_unud_jimbaran_km"] = round(j_jimbaran, 2)
+                    data_backend["jarak_unud_sudirman_km"] = round(j_sudirman, 2)
+                    data_backend["jarak_bandara_ngurah_rai_km"] = round(j_bandara, 2)
+                    print(
+                        f"    [Sukses] Koordinat didapat. Jarak ke Jimbaran: {data_backend['jarak_unud_jimbaran_km']} km"
+                    )
+
+                if ENABLE_POI_ENRICHMENT:
+                    poi_distances = enrich_nearest_poi_distances(
+                        kos_lat, kos_lon, debug=True
+                    )
+                    data_backend.update(poi_distances)
+
+            if obj_harga and "price" in obj_harga:
+                price_block = obj_harga.get("price") or {}
+                h_bulan = price_block.get("price_monthly") or {}
+                if h_bulan:
+                    data_backend["harga_real_detail"] = (
+                        f"{h_bulan.get('currency_symbol')}{h_bulan.get('price')}/{h_bulan.get('rent_type_unit')}"
+                    )
+
+            # Tutup tab detail karena datanya sudah aman di variabel Python
+            detail_page.close()
+
+            # Gabungkan data dasar dari card dengan data objek dari tab dalam
+            item_kos = {
+                "nama_kost": nama,
+                "harga_card": harga_card,
+                "url_detail": url_detail,
+            }
+            item_kos.update(data_backend)
+
+            scraped_data.append(item_kos)
+
+            # Simpan progres scrape ke file setiap item agar aman jika proses berhenti di tengah
+            try:
+                existing = []
+                if os.path.exists(OUTPUT_FILE):
+                    with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                        existing = json.load(f) or []
+
+                if not isinstance(existing, list):
+                    existing = []
+
+                with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+                    json.dump(existing + [item_kos], f, ensure_ascii=False, indent=4)
+            except Exception as e:
+                print(f"    Gagal menyimpan progres ke file: {e}")
+
+            # Jeda pendek demi kestabilan browser sebelum lanjut card berikutnya
+            page.wait_for_timeout(300)
+
+        except Exception as e:
+            print(f"    Gagal memproses card pada indeks {index} karena: {e}")
+            try:
+                # Amankan jika ada tab detail yang bocor/lupa tertutup saat terjadi error
+                if len(page.context.pages) > 1:
+                    page.context.pages[-1].close()
+            except Exception as e:
+                print(f"    Gagal menutup tab detail yang bocor: {e}")
+                pass
+            continue
+
+    return scraped_data
+
+
+def run_main():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=100)
+        browser = p.chromium.launch(headless=True, slow_mo=50)
 
+        # Kelola cookies state agar tidak memicu deteksi bot berlebih
         if os.path.exists(SESSION_FILE):
-            print("Menggunakan session yang tersimpan...")
             context = browser.new_context(
-                storage_state=SESSION_FILE,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                storage_state=SESSION_FILE, user_agent=HEADERS["User-Agent"]
             )
         else:
-            print("Session tidak ditemukan. Membuat session baru...")
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        # --- BLOKIR CSS ---
-        # Fungsi interceptor untuk mengecek tipe data request
+            context = browser.new_context(user_agent=HEADERS["User-Agent"])
 
-        context.route("**/*", block_assets)
-        # --------------------------
-
-        hasil_scrape, pages = search_by_locations(
-            location="ubud-kabupaten-gianyar-bali-indonesia",
-            context=context,
-            debug=True,
+        # Blokir aset gambar pada browser utama agar performa klik cepat & hemat bandwidth
+        context.route(
+            "**/*",
+            lambda route: (
+                route.abort()
+                if route.request.resource_type == "image"
+                else route.continue_()
+            ),
         )
-        cards = pages.locator(".kost-rc")
-        jumlah_cards = cards.count()
-        print(f"Jumlah card yang ditemukan: {jumlah_cards}")
 
-        # untuk setiap card kita ekstrak data menggunakan fungsi inspect_room_detail
-        hasil_detail = []
-        for index in range(jumlah_cards):
+        page = context.new_page()
+
+        # Target Pencarian (Bisa kamu ganti parameter lokasinya)
+        target_url = f"{BASE_URL}rektorat-universitas-udayana-jl-raya-kampus-unud-jimbaran-kec-kuta-sel-kabupaten-badung-bali/all/bulanan/0-15000000/"
+        print(f"Membuka link pencarian utama: {target_url}")
+
+        page.goto(target_url)
+        page.wait_for_timeout(3000)
+
+        # Proses melumat tombol 'Lihat lebih banyak lagi' sampai habis di layar browser
+        show_more = page.get_by_text("Lihat lebih banyak lagi", exact=True)
+        print("Membuka seluruh daftar halaman kost...")
+        while True:
+            if show_more.is_visible():
+                try:
+                    show_more.click()
+                    page.wait_for_timeout(1500)
+                except Exception as e:
+                    print(f"    Gagal mengklik tombol 'Lihat lebih banyak lagi': {e}")
+                    break
+            else:
+                break
+
+        # Eksekusi fungsi pencarian hybrid
+        hasil_akhir = scrape_pencarian_hybrid(page)
+
+        # [TAHAPAkhir] Simpan data gabungan ke file JSON (append ke file jika ada)
+        print(f"\n[TAHAP KELUARAN] Menyimpan semua data ke {OUTPUT_FILE}...")
+        existing = []
+        if os.path.exists(OUTPUT_FILE):
             try:
-                card = cards.nth(index)
-                detail_url = open_card_detail(pages, card, debug=True)
-                if detail_url:
-                    print(f"\nMemproses card dengan URL: {detail_url}")
-                    detail = inspect_room_detail(detail_url)
-                    if detail:
-                        hasil_detail.append(detail)
-                    pages.go_back(wait_until="networkidle")
-                    pages.wait_for_timeout(1000)
-                else:
-                    print("Gagal menemukan URL pada card ini.")
-            except Exception as e:
-                print(f"Error saat memproses card: {e}")
+                with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+                    existing = json.load(f) or []
+            except Exception:
+                existing = []
 
+        if not isinstance(existing, list):
+            # if file contains non-list JSON, overwrite it with a list
+            existing = []
+
+        combined = existing + hasil_akhir
         with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-            json.dump(hasil_scrape, f, ensure_ascii=False, indent=4)
-        with open(OUTPUT_FILE_DETAIL, "w", encoding="utf-8") as f:
-            json.dump(hasil_detail, f, ensure_ascii=False, indent=4)
+            json.dump(combined, f, ensure_ascii=False, indent=4)
+
+        print(
+            f"\n Process Hybrid Selesai! Berhasil mengamankan {len(hasil_akhir)} data kos ber-geolocation."
+        )
+
         context.storage_state(path=SESSION_FILE)
         context.close()
         browser.close()
-        print("Browser ditutup.")
+
+
+if __name__ == "__main__":
+    run_main()
