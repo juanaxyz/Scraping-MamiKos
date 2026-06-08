@@ -33,10 +33,10 @@ ENABLE_POI_ENRICHMENT = True
 POI_CATEGORIES = {
     "university": {"tags": [("amenity", "university")], "radius": 10000},
     "hospital": {"tags": [("amenity", "hospital")], "radius": 10000},
-    "supermarket": {"tags": [("shop", "supermarket")], "radius": 3000},
-    "station": {"tags": [("public_transport", "station"), ("railway", "station")], "radius": 5000},
+    "supermarket": {"tags": [("shop", "supermarket")], "radius": 10000},
+    "station": {"tags": [("public_transport", "station"), ("railway", "station")], "radius": 10000},
     "mall": {"tags": [("shop", "mall")], "radius": 10000},
-    "clinic": {"tags": [("amenity", "clinic")], "radius": 3000},
+    "clinic": {"tags": [("amenity", "clinic")], "radius": 10000},
 }
 
 POI_DISTANCE_CACHE = {}
@@ -93,6 +93,22 @@ def _normalize_facility_names(items):
     return normalized
 
 
+def _extract_poi_label(tags, category):
+    if not isinstance(tags, dict):
+        return category
+
+    for key in ("name", "brand", "operator", "ref", "amenity", "shop", "office"):
+        value = tags.get(key)
+        if value:
+            return value
+
+    for key, value in tags.items():
+        if value:
+            return f"{key}={value}"
+
+    return category
+
+
 def ambil_kolom_analisis_dari_json(obj_kos):
     """Ambil dan rapikan kolom yang relevan untuk analisis dari JSON detail Mamikos."""
     if not isinstance(obj_kos, dict):
@@ -139,6 +155,10 @@ def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
         f"dist_to_nearest_{category}_km": None
         for category in POI_CATEGORIES.keys()
     }
+    result.update({
+        f"nearest_{category}_name": None
+        for category in POI_CATEGORIES.keys()
+    })
 
     lat = _to_float(kos_lat)
     lon = _to_float(kos_lon)
@@ -214,7 +234,9 @@ def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
                 break
 
         nearest_km = None
+        nearest_name = None
         for elem in elements:
+            tags = elem.get("tags", {})
             elem_lat = _to_float(elem.get("lat") or elem.get("center", {}).get("lat"))
             elem_lon = _to_float(elem.get("lon") or elem.get("center", {}).get("lon"))
             if elem_lat is None or elem_lon is None:
@@ -223,9 +245,15 @@ def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
             distance_km = hitung_jarak_haversine(lat, lon, elem_lat, elem_lon)
             if nearest_km is None or distance_km < nearest_km:
                 nearest_km = distance_km
+                nearest_name = _extract_poi_label(tags, category)
 
         if nearest_km is not None:
             result[f"dist_to_nearest_{category}_km"] = round(nearest_km, 3)
+            result[f"nearest_{category}_name"] = nearest_name
+            if debug:
+                print(
+                    f"      [POI] Terdekat {category}: {nearest_name} ({round(nearest_km, 3)} km)"
+                )
 
         time.sleep(1.5)
 
