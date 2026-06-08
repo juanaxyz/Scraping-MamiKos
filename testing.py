@@ -2,6 +2,7 @@ import json
 import math
 import os
 import re
+import time
 import requests
 from playwright.sync_api import sync_playwright
 
@@ -19,22 +20,21 @@ HEADERS = {
 }
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-OVERPASS_RADIUS_METERS = 3000
 OVERPASS_TIMEOUT_SECONDS = 25
 ENABLE_POI_ENRICHMENT = True
 
-# Pemetaan kategori POI ke tag OSM yang relevan untuk demand/livability score.
+# Pemetaan kategori POI ke tag OSM dan radius spesifik per kategori.
 POI_CATEGORIES = {
-    "university": [("amenity", "university")],
-    "hospital": [("amenity", "hospital")],
-    "marketplace": [("amenity", "marketplace")],
-    "supermarket": [("shop", "supermarket")],
-    "station": [("public_transport", "station"), ("railway", "station")],
-    "mall": [("shop", "mall")],
-    "government": [("office", "government")],
-    "clinic": [("amenity", "clinic")],
-    "school": [("amenity", "school")],
-    "restaurant": [("amenity", "restaurant")],
+    "university": {"tags": [("amenity", "university")], "radius": 10000},
+    "hospital": {"tags": [("amenity", "hospital")], "radius": 10000},
+    "marketplace": {"tags": [("amenity", "marketplace")], "radius": 5000},
+    "supermarket": {"tags": [("shop", "supermarket")], "radius": 3000},
+    "station": {"tags": [("public_transport", "station"), ("railway", "station")], "radius": 5000},
+    "mall": {"tags": [("shop", "mall")], "radius": 10000},
+    "government": {"tags": [("office", "government")], "radius": 5000},
+    "clinic": {"tags": [("amenity", "clinic")], "radius": 3000},
+    "school": {"tags": [("amenity", "school")], "radius": 5000},
+    "restaurant": {"tags": [("amenity", "restaurant")], "radius": 1000},
 }
 
 POI_DISTANCE_CACHE = {}
@@ -55,24 +55,6 @@ def hitung_jarak_haversine(lat1, lon1, lat2, lon2):
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
-
-
-def build_overpass_query(lat, lon, radius=OVERPASS_RADIUS_METERS):
-    query_lines = []
-    for tags in POI_CATEGORIES.values():
-        for key, value in tags:
-            query_lines.append(
-                f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];'
-            )
-
-    query_block = "\n    ".join(query_lines)
-    return (
-        "[out:json][timeout:25];\n"
-        "(\n"
-        f"    {query_block}\n"
-        ");\n"
-        "out center tags;"
-    )
 
 
 def _to_float(value):
@@ -152,51 +134,81 @@ def enrich_nearest_poi_distances(kos_lat, kos_lon, debug=False):
 
     cache_key = (round(lat, 4), round(lon, 4))
     if cache_key in POI_DISTANCE_CACHE:
+        if debug:
+            print(f"      [POI] Cache hit untuk {cache_key}")
         return POI_DISTANCE_CACHE[cache_key].copy()
 
-    query = build_overpass_query(lat, lon)
-    try:
-        response = requests.post(
-            OVERPASS_URL,
-            data={"data": query},
-            headers={
-                "User-Agent": HEADERS["User-Agent"],
-                "Accept": "application/json",
-            },
-            timeout=OVERPASS_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except Exception as e:
+    for category, config in POI_CATEGORIES.items():
+        tags = config["tags"]
+        radius = config["radius"]
+
         if debug:
-            print(f"    [POI] Gagal query Overpass: {e}")
-        POI_DISTANCE_CACHE[cache_key] = result.copy()
-        return result
+            print(f"      [POI] Querying: {category} (radius {radius}m)...")
 
-    nearest = {category: None for category in POI_CATEGORIES.keys()}
-    elements = payload.get("elements", [])
+        tag_filters = "\n    ".join(
+            f'nwr(around:{radius},{lat},{lon})["{key}"="{value}"];'
+            for key, value in tags
+        )
+        query = (
+            f"[out:json][timeout:{OVERPASS_TIMEOUT_SECONDS}];\n"
+            f"(\n"
+            f"    {tag_filters}\n"
+            f");\n"
+            f"out center 5;"
+        )
 
-    for elem in elements:
-        tags = elem.get("tags", {})
-        elem_lat = _to_float(elem.get("lat", elem.get("center", {}).get("lat")))
-        elem_lon = _to_float(elem.get("lon", elem.get("center", {}).get("lon")))
-        if elem_lat is None or elem_lon is None:
-            continue
+        elements = []
+        for attempt in range(3):
+            try:
+                response = requests.get(
+                    OVERPASS_URL,
+                    params={"data": query},
+                    headers={"User-Agent": HEADERS["User-Agent"]},
+                    timeout=OVERPASS_TIMEOUT_SECONDS + 5,
+                )
+                response.raise_for_status()
+                elements = response.json().get("elements", [])
+                break
+            except requests.exceptions.Timeout:
+                wait_seconds = 10 * (attempt + 1)
+                if debug:
+                    print(
+                        f"      [POI] Timeout attempt {attempt + 1}/3 untuk {category}, retry dalam {wait_seconds}s..."
+                    )
+                time.sleep(wait_seconds)
+            except requests.exceptions.HTTPError:
+                status_code = getattr(response, "status_code", None)
+                if status_code in (429, 504):
+                    wait_seconds = 15 * (attempt + 1)
+                    if debug:
+                        print(
+                            f"      [POI] HTTP {status_code} untuk {category}, retry dalam {wait_seconds}s..."
+                        )
+                    time.sleep(wait_seconds)
+                    continue
+                if debug:
+                    print(f"      [POI] HTTP Error tidak tertangani untuk {category}: {status_code}")
+                break
+            except Exception as e:
+                if debug:
+                    print(f"      [POI] Error untuk {category}: {e}")
+                break
 
-        distance_km = hitung_jarak_haversine(lat, lon, elem_lat, elem_lon)
-
-        for category, tag_pairs in POI_CATEGORIES.items():
-            matched = any(tags.get(key) == value for key, value in tag_pairs)
-            if not matched:
+        nearest_km = None
+        for elem in elements:
+            elem_lat = _to_float(elem.get("lat") or elem.get("center", {}).get("lat"))
+            elem_lon = _to_float(elem.get("lon") or elem.get("center", {}).get("lon"))
+            if elem_lat is None or elem_lon is None:
                 continue
 
-            previous = nearest[category]
-            if previous is None or distance_km < previous:
-                nearest[category] = distance_km
+            distance_km = hitung_jarak_haversine(lat, lon, elem_lat, elem_lon)
+            if nearest_km is None or distance_km < nearest_km:
+                nearest_km = distance_km
 
-    for category, distance_km in nearest.items():
-        if distance_km is not None:
-            result[f"dist_to_nearest_{category}_km"] = round(distance_km, 3)
+        if nearest_km is not None:
+            result[f"dist_to_nearest_{category}_km"] = round(nearest_km, 3)
+
+        time.sleep(1.5)
 
     POI_DISTANCE_CACHE[cache_key] = result.copy()
     return result
