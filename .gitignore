@@ -1,2 +1,58 @@
+# IDE
 .vscode/
+.idea/
+
+# Agent config
+.agents/
+AGENTS.md
+skills-lock.json
+
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.py[cod]
+*$py.class
+
+# Project specific - Data files
+data/raw/*.json
+data/processed/*.json
+data/failed/*.json
+sessions/*.json
+*.log
+debug.log
+
+# Keep directory structure
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/failed/.gitkeep
+!sessions/.gitkeep
+
+# Environment
+.env
+.venv
+venv/
+ENV/
+env/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# System
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Playwright
+playwright-report/
+test-results/
