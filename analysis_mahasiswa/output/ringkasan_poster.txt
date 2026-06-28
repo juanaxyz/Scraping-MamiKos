@@ -1,0 +1,70 @@
+
+============================================================
+  20 INSIGHT KOS UNTUK MAHASISWA - RINGKASAN ANGKA
+============================================================
+
+1. GAMBARAN HARGA BULANAN
+   Rata-rata: Rp 2.80jt  |  Median: Rp 2.50jt
+   Termurah: Rp 700,000  |  Termahal: Rp 12.00jt
+   Q1 (25%): Rp 2.00jt  |  Q3 (75%): Rp 3.00jt
+
+2. BUDGET AMAN MAHASISWA
+   ≤ Rp 1,5jt: 20 kos (8.3%)
+   ≤ Rp 2,0jt: 66 kos (27.4%)
+   ≤ Rp 2,5jt: 123 kos (51.0%) ★ AMAN
+   ≤ Rp 3,0jt: 184 kos (76.3%)
+
+3. RENTANG HARGA WAJAR (IQR)
+   Rp 2.00jt - Rp 3.00jt (50% kos di rentang ini)
+
+4. KATEGORI HARGA
+   Murah (<Rp1,5jt): 20 kos (8.3%)
+   Terjangkau: 103 kos (42.7%)
+   Standar: 86 kos (35.7%)
+   Mahal: 19 kos (7.9%)
+   Premium: 13 kos (5.4%)
+
+5. JIMBARAN VS SUDIRMAN
+   Jimbaran: 240 kos, rata-rata Rp 2.80jt
+   Sudirman: 1 kos, rata-rata Rp 4.00jt
+
+6. HARGA PER KECAMATAN (rata-rata)
+      Denpasar Selatan: Rp 4.00jt
+   Kuta Selatan: Rp 2.86jt
+   Kuta: Rp 2.11jt
+   Kuta Utara: Rp 1.85jt
+   South Kuta: Rp 1.40jt
+
+7. GENDER
+   Campur: 220 kos, rata-rata Rp 2.88jt
+   Putri: 21 kos, rata-rata Rp 2.01jt
+   t-test: p=8.92e-07 (SIGNIFIKAN)
+
+8. PELUANG BUDGET ≤ Rp 2,5jt
+   51.0% kos masuk budget (1 dari 2 kos)
+
+9. KOS DI BAWAH Rp 2jt
+   27.4% kos (66 dari 241)
+
+10. TERMURAH: Rp 700,000  |  TERMAHAL: Rp 12.00jt
+    Rasio termahal/termurah: 17.1x
+
+11. UKURAN vs HARGA: r = 0.498 (berpengaruh)
+
+12. RUMUS: Harga = 1,877,167 + 47866 × Luas (m²)
+
+13-15. FASILITAS TERPOPULER:
+    Kamar: Kasur (95.0%)
+    Umum: Wifi (85.9%)
+    Mandi: K. Mandi Dalam (91.7%)
+
+16. FASILITAS vs HARGA: r = 0.294
+
+17. DP: rata-rata 33.0%, median 30.0%
+
+18. RATING: rata-rata 0.94/5.0
+
+19. DILIHAT vs HARGA: r = -0.312
+
+20. HARGA/M² TERBAIK: Kost Kawaii Tipe A
+    Rp 33,333/m² | 90m²

@@ -1,0 +1,73 @@
+
+============================================================
+  35 INSIGHT KOS UNTUK MAHASISWA - RINGKASAN
+============================================================
+
+1. GAMBARAN HARGA
+   Rata-rata: Rp 2.80jt  |  Median: Rp 2.50jt
+   Termurah: Rp 700,000  |  Termahal: Rp 12.00jt
+
+2. BUDGET KUMULATIF
+    <=Rp1,5jt: 20 kos (8.3%)
+    <=Rp2,0jt: 66 kos (27.4%)
+    <=Rp2,5jt: 123 kos (51.0%) ★
+    <=Rp3,0jt: 184 kos (76.3%)
+
+3. BIAYA BULAN PERTAMA
+   Rata-rata: Rp 3.31jt  |  Median: Rp 3.00jt
+
+4. DP
+   Rata-rata: 33.0%  |  Median: 30.0%
+
+5. JARAK ZONA
+   <1km: Rp 2.92jt (n=34)
+   1-2km: Rp 2.94jt (n=104)
+   >5km: Rp 2.01jt (n=19)
+
+6. HEMAT JALAN JAUH
+   <1km vs >5km: hemat Rp 901,930/bulan
+
+7. PREDIKSI HARGA
+   Harga = 1,877,167 + 47866 × Luas(m²)  (R²=0.248)
+
+8. PREDIKSI MULTI-FAKTOR
+   R² = 0.430 (43.0%)
+
+9. AC vs TANPA AC
+   Selisih: N/A
+
+10. KM DALAM vs LUAR
+    Selisih: Rp 611,263
+
+11. FASILITAS UMUM:
+     Kamar: AC (86 (100%)% tier standar)
+     Umum: WiFi (81 (94%)% tier standar)
+     Mandi: KM Dalam (83 (97%)% tier standar)
+
+12. KATEGORI HARGA
+    Murah: 20 kos
+    Terjangkau: 103 kos
+    Standar: 86 kos
+    Mahal: 19 kos
+    Premium: 13 kos
+
+13. GENDER
+    Campur: Rp 2.88jt (n=220)
+    Putri: Rp 2.01jt (n=21)
+
+14. TAHUN BANGUNAN
+    Rata-rata: 2021  |  Range: 2005-2026
+
+15. KAMAR KOSONG
+    Total: 267 kamar  |  Rata-rata: 1.1/kos
+
+16. RATING & HARGA: r = -0.129 (signifikan)
+
+17. FASILITAS vs HARGA: r = 0.294
+
+18. VIEWS vs HARGA: Inverse relationship
+
+19. KENAIKAN TAHUNAN (estimasi 5%): Rp 140,152
+
+20. FILTER SIMULASI (Rp2,5jt + ≤3km + AC+WiFi+KM Dalam): 91 kos cocok
+

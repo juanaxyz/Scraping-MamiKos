@@ -36,6 +36,13 @@ def scrape_pencarian_hybrid(
         try:
             print(f"\n--> Memproses Card [{index + 1}/{total_cards}]")
 
+            # Remove overlays before each card click
+            page.evaluate("""() => {
+                document.querySelectorAll(
+                    '[class*="cookie"], [class*="consent"], [class*="overlay"], [class*="modal"], [class*="popup"], [class*="banner"]'
+                ).forEach(el => el.remove());
+            }""")
+
             current_card = cards_locator.nth(index)
 
             nama_loc = current_card.locator(".rc-info__name, .kost-rc__info span").first
@@ -51,12 +58,39 @@ def scrape_pencarian_hybrid(
                 harga_loc.text_content().strip() if harga_loc.count() > 0 else None
             )
 
-            ctx = page.context
-            with ctx.expect_page() as new_page_info:
-                current_card.click()
+            current_card.scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
 
-            detail_page = new_page_info.value
-            detail_page.wait_for_load_state("domcontentloaded")
+            # Click card to open detail page in new tab
+            # Use name element specifically - it reliably triggers new tab
+            click_target = current_card.locator(".rc-info__name, .rc-info__name span").first
+            if click_target.count() == 0:
+                click_target = current_card  # fallback to whole card
+
+            try:
+                ctx = page.context
+                with ctx.expect_page(timeout=15000) as new_page_info:
+                    click_target.click()
+                detail_page = new_page_info.value
+                detail_page.wait_for_load_state("domcontentloaded")
+                detail_page.wait_for_timeout(2000)
+            except Exception as click_err:
+                err_str = str(click_err)
+                if "timeout" in err_str.lower():
+                    print(f"    [Warning] New tab timeout, trying JS click...")
+                    try:
+                        ctx = page.context
+                        with ctx.expect_page(timeout=15000) as new_page_info:
+                            click_target.evaluate("el => el.click()")
+                        detail_page = new_page_info.value
+                        detail_page.wait_for_load_state("domcontentloaded")
+                        detail_page.wait_for_timeout(2000)
+                    except Exception:
+                        print(f"    [Error] Gagal membuka detail page, skip card ini")
+                        continue
+                else:
+                    print(f"    [Error] Click failed: {click_err}")
+                    continue
             url_detail = detail_page.url
             print(f"    URL Detail: {url_detail}")
 
@@ -137,6 +171,28 @@ def scrape_pencarian_hybrid(
             page.wait_for_timeout(300)
 
         except Exception as e:
+            error_msg = str(e)
+            if "intercepts pointer events" in error_msg:
+                # Log overlay info for debugging
+                try:
+                    overlay_info = page.evaluate("""() => {
+                        const els = document.elementsFromPoint(window.innerWidth/2, window.innerHeight/2);
+                        return els.slice(0, 5).map(el => ({
+                            tag: el.tagName,
+                            id: el.id,
+                            classes: el.className?.toString()?.substring(0, 80)
+                        }));
+                    }""")
+                    print(f"    [Debug] Overlay detected: {overlay_info}")
+                    # Try to remove overlay again
+                    page.evaluate("""() => {
+                        document.querySelectorAll(
+                            '[class*="cookie"], [class*="consent"], [class*="overlay"], [class*="modal"], [class*="popup"], [class*="banner"]'
+                        ).forEach(el => el.remove());
+                    }""")
+                    print("    [Overlay] Removed overlay, retrying next card...")
+                except Exception:
+                    pass
             print(f"    [Error] Gagal memproses card {index}: {e}")
             try:
                 pages = page.context.pages
@@ -156,18 +212,15 @@ def run_main():
     print(f"[Init] Failed POI log: {failed_logger.count} entry di {FAILED_POI_FILE}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=50)
+        browser = p.chromium.launch(headless=True, slow_mo=50)
 
         context = browser.new_context(
             storage_state=SESSION_FILE if os.path.exists(SESSION_FILE) else None,
             user_agent=HEADERS["User-Agent"],
         )
-        context.route(
-            "**/*",
-            lambda route: route.abort()
-            if route.request.resource_type == "image"
-            else route.continue_(),
-        )
+
+        # Do NOT block images during page load - causes route handler deadlock
+        # Images will be loaded but we don't care about them
 
         page = context.new_page()
 
@@ -176,8 +229,74 @@ def run_main():
             "universitas-udayana-kampus-sudirman-universitas-udayana-kampus-sudirman-dangin-puri-klod-denpasar-city-bali-indonesia/all/bulanan/0-15000000?keyword=Universitas%20Udayana%20-%20Kampus%20Sudirman&suggestion_type=search&rent=2&sort=price,-&price=0-20000000&singgahsini=0"
         )
         print(f"Membuka: {target_url}")
-        page.goto(target_url)
-        page.wait_for_timeout(3000)
+
+        # Navigate with retry (network can be flaky)
+        for attempt in range(3):
+            try:
+                page.goto(target_url, timeout=60000, wait_until="domcontentloaded")
+                print(f"    [OK] Halaman dimuat (attempt {attempt + 1})")
+                break
+            except Exception as e:
+                print(f"    [Warning] Attempt {attempt + 1} failed: {e}")
+                if attempt == 2:
+                    print("    [Error] Gagal navigasi setelah 3 percobaan")
+                    context.close()
+                    browser.close()
+                    return
+                page.wait_for_timeout(3000)
+
+        # Wait for Vue to render cards (up to 30s)
+        print("    [Wait] Menunggu cards muncul...")
+        try:
+            page.wait_for_selector(".kost-rc", timeout=30000)
+            print("    [OK] Cards ditemukan!")
+        except Exception:
+            print("    [Warning] .kost-rc tidak ditemukan, coba selector lain...")
+            try:
+                page.wait_for_selector("[data-testid='roomCard']", timeout=10000)
+                print("    [OK] Cards ditemukan via data-testid!")
+            except Exception:
+                print("    [Error] Tidak ada cards yang ditemukan")
+                context.close()
+                browser.close()
+                return
+
+        # Dismiss popup/overlay (cookie consent, promo banner, etc.)
+        dismiss_selectors = [
+            'button:has-text("Accept")',
+            'button:has-text("Setuju")',
+            'button:has-text("Terima")',
+            'button:has-text("OK")',
+            'button:has-text("Got it")',
+            'button:has-text("Mengerti")',
+            '[data-testid="cookie-consent-accept"]',
+            '#onetrust-accept-btn-handler',
+            '[aria-label="close"]',
+            '[aria-label="Close"]',
+        ]
+        for sel in dismiss_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=500):
+                    btn.click(timeout=1000)
+                    print(f"    [Overlay] Dismissed: {sel}")
+                    page.wait_for_timeout(500)
+                    break
+            except Exception:
+                continue
+
+        # Remove fixed/absolute overlays via JS
+        page.evaluate("""() => {
+            document.querySelectorAll(
+                '[class*="cookie"], [class*="consent"], [class*="overlay"], [class*="modal"], [class*="popup"], [class*="banner"]'
+            ).forEach(el => {
+                const pos = getComputedStyle(el).position;
+                if (pos === 'fixed' || pos === 'absolute') {
+                    el.remove();
+                }
+            });
+        }""")
+        print("    [Overlay] Cleaned up fixed/absolute overlays via JS")
 
         print("Memperluas daftar kost...")
         show_more = page.get_by_text("Lihat lebih banyak lagi", exact=True)
