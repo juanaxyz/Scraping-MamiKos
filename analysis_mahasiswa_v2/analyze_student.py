@@ -2,12 +2,12 @@
 ANALISIS MAHASISWA V2 - 35 Insight Praktis + Prediksi + Ekspektasi
 ====================================================================
 Perspektif mahasiswa rantau mencari kos di sekitar UNUD Jimbaran.
-Dataset: data/mamikos_all.csv (241 kos)
+Source: data/mamikos_all.csv → preprocessed → data/processed/mamikos_clean.csv
 Output : analysis_mahasiswa_v2/output/*.png
 ====================================================================
 """
 
-import os, re, warnings, sys
+import os, warnings, sys
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -32,16 +32,6 @@ def sf(name):
     plt.close()
     print(f'  [OK] {name}')
 
-def pr(s):
-    if pd.isna(s): return None
-    n = re.findall(r'\d+', str(s).replace('.','').replace('Rp','').replace('/bulan',''))
-    return int(n[0]) if n else None
-
-def pz(s):
-    if pd.isna(s): return np.nan, np.nan
-    m = re.match(r'([\d.]+)\s*x\s*([\d.]+)', str(s))
-    return (float(m.group(1)), float(m.group(2))) if m else (np.nan, np.nan)
-
 def fr(v):
     if pd.isna(v) or v is None: return 'N/A'
     if v >= 1e6: return f'Rp {v/1e6:.2f}jt'
@@ -55,42 +45,21 @@ def ab(ax, text, xy=(0.55,0.97), fs=9, alpha=0.92):
 print('\n' + '='*70)
 print('  LOADING DATA')
 print('='*70)
-CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'mamikos_all.csv')
-df = pd.read_csv(CSV)
-print(f'  Loaded {len(df)} rows x {len(df.columns)} cols')
-
-df['price'] = df['harga_real_detail'].apply(pr)
-df[['sw','sl']] = df['size'].apply(lambda x: pd.Series(pz(x)))
-df['size_area'] = df['sw'] * df['sl']
-df['pps'] = df['price'] / df['size_area']
-df['sub'] = df['area_subdistrict'].apply(lambda x: str(x).replace('Kecamatan ',''))
-df['gen'] = df['gender'].map({0:'Campur',1:'Putri',2:'Putri'})
-
-for c in ['dist_to_nearest_supermarket_km','dist_to_nearest_terminal_km']:
-    df[c] = pd.to_numeric(df[c], errors='coerce')
-
-bc = [c for c in df.columns if c.startswith('fac_bath_')]
-rc = [c for c in df.columns if c.startswith('fac_room_')]
-sc = [c for c in df.columns if c.startswith('fac_share_')]
-df['fb'] = df[bc].sum(axis=1)
-df['fr'] = df[rc].sum(axis=1)
-df['fs'] = df[sc].sum(axis=1)
-df['ft'] = df['fb']+df['fr']+df['fs']
-
-def cs(x):
-    if pd.isna(x): return x
-    return str(x).replace('Kecamatan ','')
-
-df['subdistrict'] = df['area_subdistrict'].apply(cs)
-
-dv = df.dropna(subset=['price'])
+CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'processed', 'mamikos_clean.csv')
+dv = pd.read_csv(CSV)
+print(f'  Loaded {len(dv)} rows x {len(dv.columns)} cols')
 print(f'  Valid: {len(dv)} kos')
 
-# Price tier labels
-tier_bins = [0, 1.5e6, 2.5e6, 3.5e6, 5e6, float('inf')]
-tier_lbls = ['<Rp1,5jt','Rp1,5-2,5jt','Rp2,5-3,5jt','Rp3,5-5jt','>Rp5jt']
-dv['tier'] = pd.cut(dv['price'], bins=tier_bins, labels=tier_lbls)
-dv['zone'] = pd.cut(dv['jarak_unud_jimbaran_km'], bins=[0,1,2,3,5,10], labels=['<1km','1-2km','2-3km','3-5km','>5km'])
+def _sort_tier(x):
+    if x.startswith('<'): return 0
+    if x.startswith('>'): return 999
+    return float(x.split('Rp')[1].split('-')[0].replace('jt','').replace(',', '.'))
+
+tier_lbls = sorted(dv['tier'].dropna().unique(), key=_sort_tier)
+
+bc = [c for c in dv.columns if c.startswith('fac_bath_')]
+rc = [c for c in dv.columns if c.startswith('fac_room_')]
+sc = [c for c in dv.columns if c.startswith('fac_share_')]
 
 # ====================================================================
 # TEMA 1: BUDGET BASICS (1-5)
@@ -116,9 +85,10 @@ ax.set_title('Berapa Harga Kos di Sekitar UNUD?', fontsize=15, fontweight='bold'
 ab(ax, f'Total: {d1["count"]} kos\nRata-rata: {fr(d1["mean"])}\nMedian: {fr(d1["median"])}\nTermurah: {fr(d1["min"])}\nTermahal: {fr(d1["max"])}\nQ1: {fr(d1["Q1"])}\nQ3: {fr(d1["Q3"])}')
 sf('01_gambaran_harga.png')
 
-# --- 2. BUDGET KUMULATIF ---
+# --- 2. BUDGET KUMULATIF (percentile-based) ---
 print('  2. BUDGET RP X DAPET BERAPA PILIHAN?')
-budgets = [1e6,1.5e6,2e6,2.5e6,3e6,4e6,5e6,10e6]
+pcts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.75, 0.9]
+budgets = [p.quantile(q) for q in pcts]
 bcnt = [(p<=b).sum() for b in budgets]
 bpct = [c/len(p)*100 for c in bcnt]
 fig,ax = plt.subplots(figsize=(12,7))
@@ -131,15 +101,11 @@ ax.set_xticklabels([fr(b) for b in budgets], rotation=25, ha='right')
 ax.set_ylabel('Jumlah Kos', fontsize=13)
 ax.set_title('Budget Berapa yang Paling Realistis?', fontsize=14, fontweight='bold')
 ax.set_ylim(0, max(bcnt)+30)
-ab(ax, f'≤Rp1,5jt: {bcnt[1]} kos ({bpct[1]:.1f}%)\n≤Rp2,0jt: {bcnt[2]} kos ({bpct[2]:.1f}%)\n≤Rp2,5jt: {bcnt[3]} kos ({bpct[3]:.1f}%) ⭐\n≤Rp3,0jt: {bcnt[4]} kos ({bpct[4]:.1f}%)\n≤Rp5,0jt: {bcnt[6]} kos ({bpct[6]:.1f}%)')
+ab(ax, f'≤{fr(budgets[1])}: {bcnt[1]} kos ({bpct[1]:.1f}%)\n≤{fr(budgets[2])}: {bcnt[2]} kos ({bpct[2]:.1f}%)\n≤{fr(budgets[3])}: {bcnt[3]} kos ({bpct[3]:.1f}%) ⭐\n≤{fr(budgets[4])}: {bcnt[4]} kos ({bpct[4]:.1f}%)\n≤{fr(budgets[6])}: {bcnt[6]} kos ({bpct[6]:.1f}%)')
 sf('02_budget_kumulatif.png')
 
 # --- 3. ESTIMASI BIAYA BULAN PERTAMA ---
 print('  3. ESTIMASI TOTAL BIAYA BULAN PERTAMA')
-dp_vals = dv['dp_percentage'].dropna()
-dv['first_month'] = dv['price'].copy()
-dp_mask = dv['dp_percentage'].notna()
-dv.loc[dp_mask, 'first_month'] = dv.loc[dp_mask, 'price'] * (1 + dv.loc[dp_mask, 'dp_percentage']/100)
 fm = dv['first_month']
 print(f'  Rata-rata: {fr(fm.mean())} | Median: {fr(fm.median())}')
 
@@ -251,7 +217,7 @@ for i,t in enumerate(tier_lbls):
 ax.set_xlabel('Tier Harga', fontsize=13)
 ax.set_ylabel('Jarak dari UNUD (km)', fontsize=13)
 ax.set_title('Ekspektasi Jarak dari Kampus Berdasarkan Budget', fontsize=14, fontweight='bold')
-ab(ax, f'Budget <Rp1,5jt:\nrata-rata jarak {tier_dist.loc["<Rp1,5jt","mean"]:.2f}km\n\nBudget Rp1,5-2,5jt:\nrata-rata jarak {tier_dist.loc["Rp1,5-2,5jt","mean"]:.2f}km\n\nBudget Rp2,5-3,5jt:\nrata-rata jarak {tier_dist.loc["Rp2,5-3,5jt","mean"]:.2f}km\n\nBudget >Rp5jt:\nrata-rata jarak {tier_dist.loc[">Rp5jt","mean"]:.2f}km', xy=(0.55,0.92), fs=9)
+ab(ax, chr(10).join([f'{t}: rata-rata jarak {tier_dist.loc[t,"mean"]:.2f}km (n={tier_dist.loc[t,"count"]:.0f})' for t in tier_lbls]), xy=(0.55,0.92), fs=9)
 sf('08_ekspektasi_jarak.png')
 
 # --- 9. REKOMENDASI KOS DEKAT KAMPUS ---
@@ -371,13 +337,13 @@ ylabel = 'Luas Kamar (m²)'
 ax.set_ylabel(ylabel, fontsize=13)
 ax.set_xlabel('Tier Harga', fontsize=13)
 ax.set_title('Berapa Luas Kamar yang Bisa Kamu Ekspektasikan?', fontsize=14, fontweight='bold')
-ab(ax, f'<Rp1,5jt: {tier_size.loc["<Rp1,5jt","mean"]:.1f}m²\nRp1,5-2,5jt: {tier_size.loc["Rp1,5-2,5jt","mean"]:.1f}m²\nRp2,5-3,5jt: {tier_size.loc["Rp2,5-3,5jt","mean"]:.1f}m²\nRp3,5-5jt: {tier_size.loc["Rp3,5-5jt","mean"]:.1f}m²\n>Rp5jt: {tier_size.loc[">Rp5jt","mean"]:.1f}m²\n\n💡 Naik 1 tier = ~+5m²', xy=(0.55,0.92), fs=10)
+ab(ax, chr(10).join([f'{t}: rata-rata {tier_size.loc[t,"mean"]:.1f}m²' for t in tier_lbls]) + '\n\n💡 Naik 1 tier = ~+5m²', xy=(0.55,0.92), fs=10)
 sf('13_ekspektasi_luas_kamar.png')
 
 # --- 14. AC WORTH IT? ---
 print('  14. APAKAH AC SEBANDING DENGAN HARGA?')
-has_ac = dv[dv['fac_room_Ac']>0]['price'] if 'fac_room_Ac' in dv.columns else pd.Series(dtype=float)
-no_ac = dv[dv['fac_room_Ac']==0]['price'] if 'fac_room_Ac' in dv.columns else pd.Series(dtype=float)
+has_ac = dv[dv['fac_room_AC']>0]['price'] if 'fac_room_AC' in dv.columns else pd.Series(dtype=float)
+no_ac = dv[dv['fac_room_AC']==0]['price'] if 'fac_room_AC' in dv.columns else pd.Series(dtype=float)
 ac_diff = has_ac.mean() - no_ac.mean()
 fig,ax = plt.subplots(figsize=(10,7))
 ax.bar(['Tanpa AC', 'Dengan AC'], [no_ac.mean()/1e6, has_ac.mean()/1e6],
@@ -486,7 +452,7 @@ if len(ml_df) > 5:
     ab(ax, f'Faktor: Size + Jarak + Tahun + Fasilitas\nR² = {r2_multi:.3f}\n\nKoefisien:\nLuas: +Rp {coefs["size_area"]:,.0f}/m²\nJarak: -Rp {abs(coefs["jarak_unud_jimbaran_km"]):,.0f}/km\nTahun: +Rp {coefs["building_year"]:,.0f}/tahun\nFasilitas: +Rp {coefs["ft"]:,.0f}/item\n\nAkurasi: {r2_multi*100:.0f}%', xy=(0.55,0.92), fs=9)
     sf('19_prediksi_multifaktor.png')
 
-# --- 20. HARGA PER M2 YANG WAJAR ---
+# --- 20. HARGA PER M2 YANG WAJAR (P33/P66-based) ---
 print('  20. EKSPEKTASI HARGA PER M² YANG WAJAR')
 tier_pps = dv.groupby('tier', observed=True)['pps'].agg(['mean','median','std','count'])
 print(tier_pps.to_string())
@@ -501,24 +467,26 @@ for i,t in enumerate(tier_lbls):
 ax.set_xlabel('Tier Harga', fontsize=13)
 ax.set_ylabel('Harga per m² (Rp)', fontsize=13)
 ax.set_title('Berapa Harga per m² yang Wajar di Setiap Tier?', fontsize=14, fontweight='bold')
-ab(ax, f'Rata-rata Rp {dv["pps"].mean():,.0f}/m²\nMedian Rp {dv["pps"].median():,.0f}/m²\n\n💡 Threshold wajar:\n<Rp 100rb/m² = MURAH\nRp 100-200rb/m² = STANDAR\n>Rp 200rb/m² = MAHAL\n\nCek kos idamanmu!', xy=(0.55,0.92), fs=10)
+pps_p33 = dv['pps'].quantile(0.33)
+pps_p66 = dv['pps'].quantile(0.66)
+ab(ax, f'Rata-rata Rp {dv["pps"].mean():,.0f}/m²\nMedian Rp {dv["pps"].median():,.0f}/m²\n\n💡 Threshold wajar:\n<Rp {pps_p33/1000:,.0f}rb/m² = MURAH\nRp {pps_p33/1000:,.0f}-{pps_p66/1000:,.0f}rb/m² = STANDAR\n>Rp {pps_p66/1000:,.0f}rb/m² = MAHAL\n\nCek kos idamanmu!', xy=(0.55,0.92), fs=10)
 sf('20_harga_per_m2_wajar.png')
 
 # --- 21. SIMULASI NAIK BUDGET ---
 print('  21. SIMULASI NAIK BUDGET RP 500RB')
-tiers_compare = ['Rp1,5-2,5jt','Rp2,5-3,5jt']
+tiers_compare = [tier_lbls[1], tier_lbls[2]]  # Q20-Q40 vs Q40-Q60
 t1 = dv[dv['tier']==tiers_compare[0]]
 t2 = dv[dv['tier']==tiers_compare[1]]
 comp_data = {
     'Metric': ['Rata-rata Luas','Rata-rata Jarak','Rata-rata Fasilitas','AC%','WiFi%','KM Dalam%'],
     tiers_compare[0]: [f'{t1["size_area"].mean():.1f}m²',f'{t1["jarak_unud_jimbaran_km"].mean():.2f}km',f'{t1["ft"].mean():.1f}',
-                       f'{t1["fac_room_Ac"].mean()*100:.0f}%' if 'fac_room_Ac' in dv.columns else '-',
-                       f'{t1["fac_share_Wifi"].mean()*100:.0f}%' if 'fac_share_Wifi' in dv.columns else '-',
-                       f'{t1["fac_bath_dalam"].mean()*100:.0f}%' if 'fac_bath_dalam' in dv.columns else '-'],
+                       f'{t1["fac_room_AC"].mean()*100:.0f}%' if 'fac_room_AC' in dv.columns else '-',
+                       f'{t1["fac_share_WiFi"].mean()*100:.0f}%' if 'fac_share_WiFi' in dv.columns else '-',
+                       f'{t1["fac_bath_K. Mandi Dalam"].mean()*100:.0f}%' if 'fac_bath_K. Mandi Dalam' in dv.columns else '-'],
     tiers_compare[1]: [f'{t2["size_area"].mean():.1f}m²',f'{t2["jarak_unud_jimbaran_km"].mean():.2f}km',f'{t2["ft"].mean():.1f}',
-                       f'{t2["fac_room_Ac"].mean()*100:.0f}%' if 'fac_room_Ac' in dv.columns else '-',
-                       f'{t2["fac_share_Wifi"].mean()*100:.0f}%' if 'fac_share_Wifi' in dv.columns else '-',
-                       f'{t2["fac_bath_dalam"].mean()*100:.0f}%' if 'fac_bath_dalam' in dv.columns else '-'],
+                       f'{t2["fac_room_AC"].mean()*100:.0f}%' if 'fac_room_AC' in dv.columns else '-',
+                       f'{t2["fac_share_WiFi"].mean()*100:.0f}%' if 'fac_share_WiFi' in dv.columns else '-',
+                       f'{t2["fac_bath_K. Mandi Dalam"].mean()*100:.0f}%' if 'fac_bath_K. Mandi Dalam' in dv.columns else '-'],
 }
 fig,ax = plt.subplots(figsize=(12,7))
 ax.axis('off')
@@ -544,7 +512,12 @@ wedges,texts,autotexts = ax.pie(
     pctdistance=0.75, textprops=dict(fontsize=10))
 for t in autotexts: t.set_fontweight('bold'); t.set_fontsize(11)
 ax.set_title('Distribusi Kategori Harga: Murah hingga Premium', fontsize=14, fontweight='bold')
-ab(ax, f'Murah (<Rp1,5jt):\n{tier_counts.get(tier_lbls[0],0)} kos ({tier_counts.get(tier_lbls[0],0)/len(dv)*100:.1f}%)\n\nTerjangkau (Rp1,5-2,5jt):\n{tier_counts.get(tier_lbls[1],0)} kos ({tier_counts.get(tier_lbls[1],0)/len(dv)*100:.1f}%)\n\nStandar (Rp2,5-3,5jt):\n{tier_counts.get(tier_lbls[2],0)} kos ({tier_counts.get(tier_lbls[2],0)/len(dv)*100:.1f}%)\n\nMahal (Rp3,5-5jt):\n{tier_counts.get(tier_lbls[3],0)} kos ({tier_counts.get(tier_lbls[3],0)/len(dv)*100:.1f}%)\n\nPremium (>Rp5jt):\n{tier_counts.get(tier_lbls[4],0)} kos ({tier_counts.get(tier_lbls[4],0)/len(dv)*100:.1f}%)', xy=(0.02,0.97), fs=9)
+labels_map = {'<': 'Murah', '>': 'Premium'}
+tier_nice = []
+for t in tier_lbls:
+    prefix = 'Murah' if t[0] == '<' else 'Premium' if t[0] == '>' else 'Terjangkau' if t == tier_lbls[1] else 'Standar' if t == tier_lbls[2] else 'Mahal'
+    tier_nice.append(f'{prefix} ({t}):\n{tier_counts.get(t,0)} kos ({tier_counts.get(t,0)/len(dv)*100:.1f}%)')
+ab(ax, '\n\n'.join(tier_nice), xy=(0.02,0.97), fs=9)
 sf('22_kategori_mahal_premium.png')
 
 # --- 23. TAHUN BANGUNAN VS HARGA ---
@@ -598,29 +571,30 @@ print('\n' + '='*70)
 print('  TEMA 5: SIMULASI & KEPUTUSAN')
 print('='*70)
 
-# --- 26. SIMULASI FILTER ---
+# --- 26. SIMULASI FILTER (median + Q3-based) ---
 print('  26. SIMULASI CARI KOS IDEAL')
-budget_sim = 2500000
-max_dist = 3
-pref_fac = ['fac_room_Ac','fac_share_Wifi','fac_bath_dalam']
+budget_sim = dv['price'].median()
+max_dist = dv['jarak_unud_jimbaran_km'].quantile(0.75)
+pref_fac = ['fac_room_AC','fac_share_WiFi','fac_bath_K. Mandi Dalam']
 avail_fac = [f for f in pref_fac if f in dv.columns]
 filtered = dv[(dv['price']<=budget_sim) & (dv['jarak_unud_jimbaran_km']<=max_dist)].copy()
 for f in avail_fac:
     filtered = filtered[filtered[f]>0]
 fig,ax = plt.subplots(figsize=(12,7))
-steps = ['Total Kos\n241', f'Budget ≤{fr(budget_sim)}\n{(dv["price"]<=budget_sim).sum()} kos',
-         f'Jarak ≤{max_dist}km\n{(dv["price"]<=budget_sim)&(dv["jarak_unud_jimbaran_km"]<=max_dist)} kos',
+n_total = len(dv)
+steps = [f'Total Kos\n{n_total}', f'Budget ≤{fr(budget_sim)}\n{(dv["price"]<=budget_sim).sum()} kos',
+         f'Jarak ≤{max_dist}km\n{((dv["price"]<=budget_sim)&(dv["jarak_unud_jimbaran_km"]<=max_dist)).sum()} kos',
          f'+AC+WiFi+KM Dalam\n{len(filtered)} kos']
-vals = [241, (dv['price']<=budget_sim).sum(), ((dv["price"]<=budget_sim)&(dv["jarak_unud_jimbaran_km"]<=max_dist)).sum(), len(filtered)]
+vals = [len(dv), (dv['price']<=budget_sim).sum(), ((dv["price"]<=budget_sim)&(dv["jarak_unud_jimbaran_km"]<=max_dist)).sum(), len(filtered)]
 colors_f = [C[0],C[5],C[1],C[2]]
 bars = ax.bar(range(4), vals, color=colors_f, edgecolor='black', width=0.5)
 for i,val in enumerate(vals):
-    ax.text(i, val+5, f'{val} kos\n({val/241*100:.1f}%)', ha='center', fontsize=11, fontweight='bold')
+    ax.text(i, val+5, f'{val} kos\n({val/n_total*100:.1f}%)', ha='center', fontsize=11, fontweight='bold')
 ax.set_xticks(range(4)); ax.set_xticklabels(steps, fontsize=9)
 ax.set_ylabel('Jumlah Kos', fontsize=13)
 ax.set_title(f'Simulasi Filter: Cari Kos Ideal dengan Budget {fr(budget_sim)}', fontsize=14, fontweight='bold')
 ax.set_ylim(0, 270)
-ab(ax, f'Dari 241 kos,\nhanya {len(filtered)} yang\ncocok dengan kriteriamu!\n\nBudget: {fr(budget_sim)}\nJarak: ≤{max_dist}km\nFasilitas: AC+WiFi+KM Dalam\n\n💡 Kamu punya\n{len(filtered)} pilihan!', xy=(0.55,0.92), fs=10)
+ab(ax, f'Dari {n_total} kos,\nhanya {len(filtered)} yang\ncocok dengan kriteriamu!\n\nBudget: {fr(budget_sim)}\nJarak: ≤{max_dist}km\nFasilitas: AC+WiFi+KM Dalam\n\n💡 Kamu punya\n{len(filtered)} pilihan!', xy=(0.55,0.92), fs=10)
 sf('26_simulasi_filter.png')
 
 # --- 27. WAKTU TERBAIK CARI KOS ---
@@ -752,28 +726,37 @@ if 'size_area' in dv.columns:
         lr33.fit(X33, y33)
         vs33['pred_price'] = lr33.predict(X33)
         vs33['residual'] = vs33['price'] - vs33['pred_price']
-        over = vs33.nlargest(5, 'residual')[['nama_kost','price','pred_price','residual','size_area']]
-        under = vs33.nsmallest(5, 'residual')[['nama_kost','price','pred_price','residual','size_area']]
-        print('OVERPRICED:')
-        print(over.to_string())
-        print('UNDERPRICED:')
-        print(under.to_string())
+        q1_r = vs33['residual'].quantile(0.25)
+        q3_r = vs33['residual'].quantile(0.75)
+        iqr_r = q3_r - q1_r
+        upper_fence = q3_r + 1.5 * iqr_r
+        lower_fence = q1_r - 1.5 * iqr_r
+        over = vs33[vs33['residual'] > upper_fence].nlargest(10, 'residual')[['nama_kost','price','pred_price','residual','size_area']]
+        under = vs33[vs33['residual'] < lower_fence].nsmallest(10, 'residual')[['nama_kost','price','pred_price','residual','size_area']]
+        print(f'  IQR fence: Q1={fr(q1_r)} | Q3={fr(q3_r)} | IQR={fr(iqr_r)}')
+        print(f'  Overpriced threshold: >{fr(upper_fence)}')
+        print(f'  Underpriced threshold: <{fr(lower_fence)}')
+        print(f'  Overpriced kos: {len(over)} | Underpriced kos: {len(under)}')
+        print('OVERPRICED (IQR outlier):')
+        print(over.to_string() if len(over) > 0 else '  (none)')
+        print('UNDERPRICED (IQR outlier):')
+        print(under.to_string() if len(under) > 0 else '  (none)')
         fig,axes33 = plt.subplots(1,2,figsize=(16,7))
         ax33a = axes33[0]
         nms_o = [n[:30]+'..' if len(str(n))>30 else n for n in over['nama_kost'].values]
-        ax33a.barh(range(5), over['residual'].values/1e6, color=C[3], edgecolor='black', height=0.6)
+        ax33a.barh(range(len(over)), over['residual'].values/1e6, color=C[3], edgecolor='black', height=0.6)
         for i,(_,r) in enumerate(over.iterrows()):
             ax33a.text(r['residual']/1e6+0.03, i, f'{fr(r["price"])} (kelebihan {fr(r["residual"])})', va='center', fontsize=9)
-        ax33a.set_yticks(range(5)); ax33a.set_yticklabels(nms_o, fontsize=8)
-        ax33a.set_xlabel('Kelebihan Harga (Juta Rp)'); ax33a.set_title('5 KOS OVERPRICED', fontsize=13, fontweight='bold', color=C[3])
+        ax33a.set_yticks(range(len(over))); ax33a.set_yticklabels(nms_o, fontsize=8)
+        ax33a.set_xlabel('Kelebihan Harga (Juta Rp)'); ax33a.set_title(f'{len(over)} OVERPRICED (IQR outlier)', fontsize=13, fontweight='bold', color=C[3])
         ax33a.invert_yaxis()
         ax33b = axes33[1]
         nms_u = [n[:30]+'..' if len(str(n))>30 else n for n in under['nama_kost'].values]
-        ax33b.barh(range(5), abs(under['residual'].values)/1e6, color=C[5], edgecolor='black', height=0.6)
+        ax33b.barh(range(len(under)), abs(under['residual'].values)/1e6, color=C[5], edgecolor='black', height=0.6)
         for i,(_,r) in enumerate(under.iterrows()):
             ax33b.text(abs(r['residual'])/1e6+0.03, i, f'{fr(r["price"])} (hemat {fr(abs(r["residual"]))})', va='center', fontsize=9)
-        ax33b.set_yticks(range(5)); ax33b.set_yticklabels(nms_u, fontsize=8)
-        ax33b.set_xlabel('Kekurangan Harga (Juta Rp)'); ax33b.set_title('5 KOS UNDERPRICED (MURAH!)', fontsize=13, fontweight='bold', color=C[5])
+        ax33b.set_yticks(range(len(under))); ax33b.set_yticklabels(nms_u, fontsize=8)
+        ax33b.set_xlabel('Kekurangan Harga (Juta Rp)'); ax33b.set_title(f'{len(under)} UNDERPRICED (IQR outlier)', fontsize=13, fontweight='bold', color=C[5])
         ax33b.invert_yaxis()
         fig.suptitle('Estimasi: Kos Overpriced vs Underpriced', fontsize=14, fontweight='bold', y=1.02)
         sf('33_overpriced_underpriced.png')
@@ -788,12 +771,13 @@ cbar = plt.colorbar(sc, ax=ax, label='Love Ratio')
 ax.set_xlabel('Harga (Juta Rp)', fontsize=13)
 ax.set_ylabel('Love Count per 1.000 Views', fontsize=13)
 ax.set_title('Prediksi Popularitas: Rasio Love vs View', fontsize=14, fontweight='bold')
-ab(ax, f'Rasio love/view tinggi\n= kos menarik & cepat terisi\n\n💡 Pilih kos dengan\nlove/view > 20\nuntuk jaminan kualitas!', xy=(0.55,0.92), fs=10)
+lr_p75 = dv34['love_ratio'].quantile(0.75)
+ab(ax, f'Rasio love/view tinggi\n= kos menarik & cepat terisi\n\n💡 Pilih kos dengan\nlove/view > {lr_p75:.0f} (P75)\nuntuk jaminan kualitas!', xy=(0.55,0.92), fs=10)
 sf('34_love_view_ratio.png')
 
-# --- 35. WHAT-IF DASHBOARD RP 3JT ---
-print('  35. WHAT-IF: SIMULASI BUDGET RP 3JT')
-budget_sim2 = 3000000
+# --- 35. WHAT-IF DASHBOARD (median-based) ---
+print('  35. WHAT-IF: SIMULASI BUDGET')
+budget_sim2 = dv['price'].median()
 sim_df = dv[dv['price']<=budget_sim2]
 fig,ax = plt.subplots(figsize=(14,10))
 ax.axis('off')
@@ -804,9 +788,9 @@ stats35 = [
     ['Rata-rata Luas Kamar', f'{sim_df["size_area"].mean():.1f} m²'],
     ['Rata-rata Jarak dari Kampus', f'{sim_df["jarak_unud_jimbaran_km"].mean():.2f} km'],
     ['Rata-rata Jumlah Fasilitas', f'{sim_df["ft"].mean():.1f} item'],
-    ['Kos dengan AC', f'{(sim_df["fac_room_Ac"]>0).sum()} kos ({(sim_df["fac_room_Ac"]>0).mean()*100:.0f}%)' if 'fac_room_Ac' in sim_df.columns else '-'],
-    ['Kos dengan WiFi', f'{(sim_df["fac_share_Wifi"]>0).sum()} kos ({(sim_df["fac_share_Wifi"]>0).mean()*100:.0f}%)' if 'fac_share_Wifi' in sim_df.columns else '-'],
-    ['Kos dengan KM Dalam', f'{(sim_df["fac_bath_dalam"]>0).sum()} kos ({(sim_df["fac_bath_dalam"]>0).mean()*100:.0f}%)' if 'fac_bath_dalam' in sim_df.columns else '-'],
+    ['Kos dengan AC', f'{(sim_df["fac_room_AC"]>0).sum()} kos ({(sim_df["fac_room_AC"]>0).mean()*100:.0f}%)' if 'fac_room_AC' in sim_df.columns else '-'],
+    ['Kos dengan WiFi', f'{(sim_df["fac_share_WiFi"]>0).sum()} kos ({(sim_df["fac_share_WiFi"]>0).mean()*100:.0f}%)' if 'fac_share_WiFi' in sim_df.columns else '-'],
+    ['Kos dengan KM Dalam', f'{(sim_df["fac_bath_K. Mandi Dalam"]>0).sum()} kos ({(sim_df["fac_bath_K. Mandi Dalam"]>0).mean()*100:.0f}%)' if 'fac_bath_K. Mandi Dalam' in sim_df.columns else '-'],
     ['Rata-rata DP', f'{sim_df["dp_percentage"].dropna().mean():.1f}%' if len(sim_df["dp_percentage"].dropna())>0 else '-'],
     ['Estimasi Bulan Pertama', fr(sim_df['first_month'].mean()) if 'first_month' in sim_df.columns else '-'],
     ['3 Rekomendasi Terbaik', f'1. {sim_df.nsmallest(1,"pps")["nama_kost"].values[0][:30]}' if len(sim_df)>0 else '-'],
@@ -819,7 +803,7 @@ table35[0,0].set_text_props(color='white', fontweight='bold')
 table35[0,1].set_text_props(color='white', fontweight='bold')
 for i in range(len(stats35)):
     if i < 3: table35[i+1,1].set_facecolor('#b7e4c7')
-ax.set_title(f'What-If Dashboard: Budget Rp 3 Juta\nApa yang Kamu Dapatkan?', fontsize=14, fontweight='bold', pad=20)
+ax.set_title(f'What-If Dashboard: Budget {fr(budget_sim2)}\nApa yang Kamu Dapatkan?', fontsize=14, fontweight='bold', pad=20)
 sf('35_whatif_dashboard.png')
 
 # ====================================================================
@@ -834,9 +818,9 @@ for t in tier_lbls:
     d = dv[dv['tier']==t]
     n = len(d)
     if n == 0: continue
-    ac_pct = f'{d["fac_room_Ac"].mean()*100:.0f}%' if 'fac_room_Ac' in d.columns else '-'
-    wifi_pct = f'{d["fac_share_Wifi"].mean()*100:.0f}%' if 'fac_share_Wifi' in d.columns else '-'
-    km_pct = f'{d["fac_bath_dalam"].mean()*100:.0f}%' if 'fac_bath_dalam' in d.columns else '-'
+    ac_pct = f'{d["fac_room_AC"].mean()*100:.0f}%' if 'fac_room_AC' in d.columns else '-'
+    wifi_pct = f'{d["fac_share_WiFi"].mean()*100:.0f}%' if 'fac_share_WiFi' in d.columns else '-'
+    km_pct = f'{d["fac_bath_K. Mandi Dalam"].mean()*100:.0f}%' if 'fac_bath_K. Mandi Dalam' in d.columns else '-'
     dp_mean = f'{d["dp_percentage"].dropna().mean():.0f}%' if len(d["dp_percentage"].dropna())>0 else '-'
     poster_data.append([t, str(n), fr(d['price'].mean()), fr(d['price'].median()),
                         f'{d["size_area"].mean():.1f}', f'{d["jarak_unud_jimbaran_km"].mean():.2f}',
@@ -878,10 +862,10 @@ summary = f'''
    Termurah: {fr(p.min())}  |  Termahal: {fr(p.max())}
 
 2. BUDGET KUMULATIF
-    <=Rp1,5jt: {bcnt[1]} kos ({bpct[1]:.1f}%)
-    <=Rp2,0jt: {bcnt[2]} kos ({bpct[2]:.1f}%)
-    <=Rp2,5jt: {bcnt[3]} kos ({bpct[3]:.1f}%) ★
-    <=Rp3,0jt: {bcnt[4]} kos ({bpct[4]:.1f}%)
+    <={fr(budgets[1])}: {bcnt[1]} kos ({bpct[1]:.1f}%)
+    <={fr(budgets[2])}: {bcnt[2]} kos ({bpct[2]:.1f}%)
+    <={fr(budgets[3])}: {bcnt[3]} kos ({bpct[3]:.1f}%) ★
+    <={fr(budgets[4])}: {bcnt[4]} kos ({bpct[4]:.1f}%)
 
 3. BIAYA BULAN PERTAMA
    Rata-rata: {fr(fm.mean())}  |  Median: {fr(fm.median())}
@@ -939,7 +923,7 @@ summary = f'''
 
 19. KENAIKAN TAHUNAN (estimasi 5%): {fr(future_price.mean()-dv["price"].mean())}
 
-20. FILTER SIMULASI (Rp2,5jt + ≤3km + AC+WiFi+KM Dalam): {len(filtered)} kos cocok
+20. FILTER SIMULASI ({fr(budget_sim)} + ≤{max_dist:.1f}km + AC+WiFi+KM Dalam): {len(filtered)} kos cocok
 
 '''
 try:
@@ -948,5 +932,5 @@ except UnicodeEncodeError:
     print(summary.encode('ascii', 'replace').decode('ascii'))
 with open(os.path.join(OUT, 'ringkasan.txt'), 'w', encoding='utf-8') as f:
     f.write(summary)
-print(f'\n  ✅ Semua file di: {OUT}/')
+print(f'\n  [OK] Semua file di: {OUT}/')
 print(f'  Total: 35 PNG + 1 Poster Table + Ringkasan')

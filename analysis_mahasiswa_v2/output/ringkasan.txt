@@ -4,20 +4,20 @@
 ============================================================
 
 1. GAMBARAN HARGA
-   Rata-rata: Rp 2.80jt  |  Median: Rp 2.50jt
+   Rata-rata: Rp 2.82jt  |  Median: Rp 2.50jt
    Termurah: Rp 700,000  |  Termahal: Rp 12.00jt
 
 2. BUDGET KUMULATIF
-    <=Rp1,5jt: 20 kos (8.3%)
-    <=Rp2,0jt: 66 kos (27.4%)
-    <=Rp2,5jt: 123 kos (51.0%) ★
-    <=Rp3,0jt: 184 kos (76.3%)
+    <=Rp 2.00jt: 100 kos (27.9%)
+    <=Rp 2.10jt: 113 kos (31.6%)
+    <=Rp 2.44jt: 143 kos (39.9%) ★
+    <=Rp 2.50jt: 182 kos (50.8%)
 
 3. BIAYA BULAN PERTAMA
-   Rata-rata: Rp 3.31jt  |  Median: Rp 3.00jt
+   Rata-rata: Rp 3.30jt  |  Median: Rp 3.00jt
 
 4. DP
-   Rata-rata: 33.0%  |  Median: 30.0%
+   Rata-rata: 32.8%  |  Median: 30.0%
 
 5. JARAK ZONA
    <1km: Rp 2.92jt (n=34)
@@ -28,46 +28,46 @@
    <1km vs >5km: hemat Rp 901,930/bulan
 
 7. PREDIKSI HARGA
-   Harga = 1,877,167 + 47866 × Luas(m²)  (R²=0.248)
+   Harga = 1,772,560 + 55266 × Luas(m²)  (R²=0.270)
 
 8. PREDIKSI MULTI-FAKTOR
-   R² = 0.430 (43.0%)
+   R² = 0.464 (46.4%)
 
 9. AC vs TANPA AC
-   Selisih: N/A
+   Selisih: Rp 1.60jt
 
 10. KM DALAM vs LUAR
-    Selisih: Rp 611,263
+    Selisih: Rp 717,117
 
 11. FASILITAS UMUM:
-     Kamar: AC (86 (100%)% tier standar)
-     Umum: WiFi (81 (94%)% tier standar)
-     Mandi: KM Dalam (83 (97%)% tier standar)
+     Kamar: AC (78 (100%)% tier standar)
+     Umum: WiFi (71 (91%)% tier standar)
+     Mandi: KM Dalam (75 (96%)% tier standar)
 
 12. KATEGORI HARGA
-    Murah: 20 kos
-    Terjangkau: 103 kos
-    Standar: 86 kos
-    Mahal: 19 kos
-    Premium: 13 kos
+    Murah: 100 kos
+    Terjangkau: 43 kos
+    Standar: 78 kos
+    Mahal: 79 kos
+    Premium: 58 kos
 
 13. GENDER
-    Campur: Rp 2.88jt (n=220)
-    Putri: Rp 2.01jt (n=21)
+    Campur: Rp 2.93jt (n=315)
+    Putri: Rp 2.01jt (n=43)
 
 14. TAHUN BANGUNAN
     Rata-rata: 2021  |  Range: 2005-2026
 
 15. KAMAR KOSONG
-    Total: 267 kamar  |  Rata-rata: 1.1/kos
+    Total: 380 kamar  |  Rata-rata: 1.1/kos
 
-16. RATING & HARGA: r = -0.129 (signifikan)
+16. RATING & HARGA: r = -0.119 (signifikan)
 
-17. FASILITAS vs HARGA: r = 0.294
+17. FASILITAS vs HARGA: r = 0.352
 
 18. VIEWS vs HARGA: Inverse relationship
 
-19. KENAIKAN TAHUNAN (estimasi 5%): Rp 140,152
+19. KENAIKAN TAHUNAN (estimasi 5%): Rp 141,148
 
-20. FILTER SIMULASI (Rp2,5jt + ≤3km + AC+WiFi+KM Dalam): 91 kos cocok
+20. FILTER SIMULASI (Rp 2.50jt + ≤13.9km + AC+WiFi+KM Dalam): 91 kos cocok
 

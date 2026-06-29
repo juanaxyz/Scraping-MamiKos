@@ -39,6 +39,15 @@ class ProgressiveSaver:
         except OSError as e:
             print(f"    [Saver] Gagal flush ke disk: {e}")
 
+    def has_name(self, name: str) -> bool:
+        if not name:
+            return False
+        name = name.strip()
+        return any(
+            item.get("nama_kost", "").strip().lower() == name.lower()
+            for item in self._data
+        )
+
     @property
     def count(self) -> int:
         return len(self._data)

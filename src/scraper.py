@@ -58,6 +58,11 @@ def scrape_pencarian_hybrid(
                 harga_loc.text_content().strip() if harga_loc.count() > 0 else None
             )
 
+            # Skip if this kos name already scraped (resume support)
+            if nama and not nama.startswith("Kos Idx") and saver.has_name(nama):
+                print(f"    [Skip] '{nama}' sudah ada di JSON, lanjut ke card berikutnya...")
+                continue
+
             current_card.scroll_into_view_if_needed()
             page.wait_for_timeout(300)
 
