@@ -10,6 +10,9 @@ Web scraper untuk Mamikos.com yang mengumpulkan dan menganalisis data kos-kosan 
 - POI (Point of Interest) enrichment via OpenStreetMap Overpass API
 - Progressive saving dengan failure recovery
 - Retry mechanism untuk POI yang gagal di-fetch
+- **Pipeline preprocessing otomatis** — normalisasi nama kota/kecamatan, parsing harga & fasilitas, binning tier & zona jarak
+- **Analisis 35 Insight Mahasiswa** — ekspektasi budget, jarak, fasilitas, simulasi keputusan, dan fairness score
+- **Threshold dinamis** — harga tier, budget simulasi, jarak ideal semuanya dihitung via quantile/percentile dari distribusi data aktual, bukan hardcoded
 
 ## Setup
 
@@ -68,17 +71,24 @@ Output tersimpan di `notebooks/insight/output/*.png`
 │       ├── poi.py               # POI enrichment logic
 │       ├── parsers.py           # JSON/HTML parsing helpers
 │       └── file_io.py           # File I/O classes
-├── data/                         # Data files (gitignored)
-│   ├── raw/                     # Raw scraped data
-│   ├── processed/               # Processed/analyzed data
-│   └── failed/                  # Failed POI logs
-├── sessions/                     # Browser sessions (gitignored)
-├── notebooks/                    # Analysis scripts
-│   └── insight/                 # Analisis 40 insight
-│       ├── analyze_mamikos.py   # Script utama analisis
-│       └── output/              # Hasil visualisasi (PNG)
-├── archive/                      # Historical data backups
-└── tests/                        # Unit tests (future)
+├── data/
+│   ├── preprocess.py            # Preprocessing pipeline (normalisasi, parsing, binning)
+│   ├── mamikos_all.csv          # Raw scraped data (137+ kolom)
+│   └── processed/
+│       ├── mamikos_clean.csv    # Preprocessed data (166 kolom, 358 kos valid)
+│       ├── raw/                 # Raw scraped data (JSON)
+│       └── failed/              # Failed POI logs
+├── analysis_mahasiswa_v2/       # Analisis 35 Insight Mahasiswa
+│   ├── analyze_student.py       # Script utama — 35 insight + poster + ringkasan
+│   └── output/                  # 35 PNG + poster + ringkasan.txt
+├── analysis_mahasiswa/          # Analisis v1 (IQR outlier detection reference)
+├── sessions/                    # Browser sessions (gitignored)
+├── notebooks/
+│   └── insight/                 # Analisis 40 insight (v1, referensi)
+│       ├── analyze_mamikos.py
+│       └── output/
+├── archive/                     # Historical data backups
+└── tests/                       # Unit tests (future)
 ```
 
 ## Output Data
@@ -153,6 +163,121 @@ Analisis dilakukan terhadap **241 kost** di area Jimbaran, Badung dengan **137 k
 | 2041 | +15 | Rp 4.23jt | Rp 4.64jt | Rp 5.10jt | +65% |
 
 **Metode**: Gabungan Building Year Trend (40%) + Inflasi Historis Indonesia (60%) dengan 3 skenario inflasi.
+
+---
+
+## Analisis 35 Insight Mahasiswa v2
+
+Analisis lanjutan yang berfokus pada **kebutuhan mahasiswa** mencari kos di sekitar UNUD Jimbaran. Data: **358 kos** (setelah preprocessing) dengan **166 kolom**.
+
+### Preprocessing (`data/preprocess.py`)
+
+Sebelum analisis, data mentah melalui pipeline berikut:
+
+| Langkah | Detail |
+|---------|--------|
+| Parsing harga | `harga_real_detail` → `price` (float) |
+| Normalisasi kota | `Denpasar`/`Kota Denpasar` → `Denpasar`, `Badung`/`Kabupaten Badung` → `Badung` |
+| Normalisasi kecamatan | 13 varian → 7 kecamatan unik |
+| Tier harga | Quantile-based: **Q0/Q20/Q40/Q60/Q80/Q100** |
+| Zona jarak | Hardcoded: `<1km` / `1-2km` / `2-3km` / `3-5km` / `>5km` |
+| Filter valid | Drop baris tanpa harga/jarak |
+| Output | `data/processed/mamikos_clean.csv` (358 baris × 166 kolom) |
+
+### 35 Insight
+
+**Tema 1 — Dasar Budget**
+| No | Insight | Metode |
+|----|---------|--------|
+| 1 | Gambaran Harga | Histogram + boxplot, mean/median/skewness |
+| 2 | Budget Kumulatif | Ecdf — budget X dapet berapa pilihan? |
+| 3 | Estimasi Biaya Bulan Pertama | Price + DP (P50/P90) |
+| 4 | Distribusi DP | Histogram DP% |
+| 5 | Termurah vs Termahal | 10 lowest & highest |
+
+**Tema 2 — Jarak & Lokasi**
+| No | Insight | Metode |
+|----|---------|--------|
+| 6 | Harga per Zona Jarak | Groupby zone, mean/median |
+| 7 | Estimasi Hemat Jalan Jauh | Rata-rata price <1km vs >5km |
+| 8 | Ekspektasi Jarak per Tier | Groupby tier → mean distance |
+| 9 | Rekomendasi Kos Dekat Kampus | Filter jarak ≤1km + AC + WiFi + KM Dalam, sort by price |
+| 10 | Harga per Kecamatan | Boxplot per subdistrict |
+
+**Tema 3 — Ekspektasi Fasilitas**
+| No | Insight | Metode |
+|----|---------|--------|
+| 11 | Fasilitas Paling Umum | Bar chart frekuensi fasilitas |
+| 12 | Ekspektasi Fasilitas per Tier | Groupby tier → % fasilitas |
+| 13 | Ekspektasi Luas Kamar per Tier | Groupby tier → mean size |
+| 14 | AC Worth It? | Harga AC vs non-AC (barplot) |
+| 15 | KM Dalam vs Luar | Harga batch-in vs batch-out |
+| 16 | Heatmap Fasilitas per Tier | Heatmap % fasilitas per tier |
+| 17 | Jumlah Fasilitas vs Harga | Scatter + regresi linear |
+
+**Tema 4 — Prediksi & Estimasi**
+| No | Insight | Metode |
+|----|---------|--------|
+| 18 | Prediksi Harga dari Luas | Regresi linear: price ~ size |
+| 19 | Prediksi Multi-Faktor | Multi-regresi: size + distance + year + total_facilities |
+| 20 | Harga per m² Wajar | Groupby tier → PPS distribution |
+| 21 | Simulasi Naik Budget | Tambah Rp 500rb → tier upgrade comparison |
+| 22 | Kategori Mahal/Premium | Pie chart: Murah/Terjangkau/Standar/Mahal/Premium |
+| 23 | Tahun Bangunan vs Harga | Scatter + regresi |
+| 24 | Available Room | Histogram distribusi kamar kosong |
+| 25 | Popularitas per Tier | Mean view_count & love_count per tier |
+
+**Tema 5 — Simulasi & Keputusan**
+| No | Insight | Metode |
+|----|---------|--------|
+| 26 | Simulasi Cari Kos Ideal | Filter median price + Q3 distance + AC + WiFi + KM Dalam |
+| 27 | Waktu Terbaik Cari Kos | Love count by time-based grouping |
+| 28 | Prediksi Kenaikan 1 Tahun | Regresi price ~ building_year |
+| 29 | Kamu Tier Mana? | Feature classification based on size/distance/facilities |
+| 30 | Fairness Score | Composite score: PPS vs tier median |
+| 31 | Rating vs Harga | Scatter + korelasi |
+| 32 | Campur vs Putri | Boxplot per gender |
+| 33 | Overpriced & Underpriced | **IQR outlier detection** (Q1-1.5×IQR, Q3+1.5×IQR) dari residual regresi |
+| 34 | Love/View Ratio | Scatter love_ratio vs price |
+| 35 | What-if Dashboard | Simulasi berbagai budget → rekomendasi terbaik |
+
+### Threshold Dinamis
+
+Semua angka ambang batas dihitung otomatis dari distribusi data:
+
+| Parameter | Sumber |
+|-----------|--------|
+| Tier harga | Quantile: Q0, Q20, Q40, Q60, Q80, Q100 |
+| Budget simulasi | P10 / P25 / P50 / P75 / P90 price |
+| Harga per m² wajar | P33 & P66 PPS per tier |
+| Jarak ideal | Q3 distance |
+| Love/View ratio tinggi | P75 love_ratio |
+| Overpriced / Underpriced | IQR 1.5× dari residual regresi |
+
+Data mentah hanya **241 kos**; setelah preprocessing tersaring **358 kos** karena pipeline berhasil mengekstrak data dari lebih banyak record yang sebelumnya gagal diparse.
+
+### Menjalankan
+
+```bash
+# Preprocessing
+python data/preprocess.py
+
+# Analisis 35 Insight + poster + ringkasan
+python analysis_mahasiswa_v2/analyze_student.py
+```
+
+Output tersimpan di `analysis_mahasiswa_v2/output/`.
+
+### Perbandingan v1 vs v2
+
+| Aspek | v1 (`analysis_mahasiswa/`) | v2 (`analysis_mahasiswa_v2/`) |
+|-------|---------------------------|-------------------------------|
+| Jumlah insight | 40 | 35 |
+| Preprocessing | Inline, manual | Pipeline terpisah (`data/preprocess.py`) |
+| Threshold | Hardcoded (Rp 1,5jt/2,5jt/3,5jt/5jt) | Quantile-based (dinamis) |
+| Outlier | Top-5 residual | IQR 1.5× (statistical) |
+| Fokus | Real estate umum | Mahasiswa UNUD |
+| Data | 241 kos, price-only | 358 kos, price + DP + view + love |
 
 ## Visualisasi
 
